@@ -1,0 +1,2972 @@
+---
+title: "Microbiome PD analysis2"
+author: "xxn"
+date: "`r paste0('Initiated on 2020 Jan')`"
+output:
+  html_document:
+    chunk_output_type: console
+    code_folding: hide
+    editor_options: null
+    fig_height: 8
+    fig_width: 8
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    indent: True
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,message = F,warning = F,error = F)
+```
+
+```{r warning=FALSE,message=FALSE}
+library(tidyverse)
+library(phyloseq)
+library(dada2)
+library(DECIPHER)
+library(phangorn)
+library(grid)
+library(gridExtra)
+library(plotly)
+library(ggplot2)
+library(readxl)
+library(kableExtra)
+library(knitr)
+library(janitor)
+library(psycho)
+library(vegan)
+library(ez)
+library(lme4)
+library(lmerTest)
+library(reshape2)
+library(hrbrthemes)
+library(colorspace)
+library(ggpubr)
+library(igraph)
+library(measurements)
+library(factoextra)
+library(ggfortify)
+library(RColorBrewer)
+library(forestplot)
+library(mixOmics)
+library(mgm)
+library(caret)
+library(e1071)
+library(randomForest)
+library(denoiseR)
+library(ROCit)
+library(vip)
+library(lme4)
+library(lmerTest)
+```
+
+```{r}
+halfpage <- conv_unit(85, "mm", "inch")
+fullpage <- conv_unit(170, "mm", "inch")
+maxhi <- conv_unit(225, "mm", "inch")
+```
+
+
+```{r}
+set.seed(100)
+dir_path <- "E:\\data\\Microbiome\\stage2\\fastq\\"
+data_path <- list.files(dir_path)
+file_path <- c()
+fnFs <- c()
+fnRs <- c()
+sampleNames <- c()
+for (i in 1:(length(data_path) - 1)){
+  file_path[i] = paste0(dir_path,data_path[i],collapse = "/")
+  fnFs0 <- sort(list.files(file_path[i], pattern="_R1_001.fastq"))
+  fnRs0 <- sort(list.files(file_path[i], pattern="_R2_001.fastq")) 
+  fnFs[i] <- file.path(file_path[i], fnFs0)
+  fnRs[i] <- file.path(file_path[i], fnRs0)
+  sampleNames[i] <- strsplit(fnFs0, "_")[[1]][1]
+}
+```
+
+
+```{r}
+filt_path <- paste0(dir_path, "filtered",collapse = "")
+filtFs <- c()
+filtRs <- c()
+for(i in 1:(length(data_path) - 1)){
+  filtFs[i] <- file.path(filt_path,paste0(sampleNames[i], "_F_filt.fastq.gz"))
+  filtRs[i] <- file.path(filt_path,paste0(sampleNames[i], "_R_filt.fastq.gz"))
+}
+```
+
+
+```{r}
+load("otu_0.RData")
+seqtabNoC = res$OTU
+taxTab = res$taxTab
+fitGTR = res$fitGTR
+```
+
+```{r}
+sample_sp = strsplit(sampleNames,"-t-")
+sample_info = data.frame(id = 0,t = 0)
+for (i in 1:length(sample_sp)){
+  if(length(sample_sp[[i]]) == 2){
+    id = sample_sp[[i]][1]
+    id = sub(pattern = "-",replacement = "/",x = id)
+    sample_time = sample_sp[[i]][2]
+    if (sample_time == "minus2"){
+      sample_time = -2
+    }else if(is.na(as.numeric(sample_time))){
+      sample_time = 0
+    }else{
+      sample_time = as.numeric(sample_time)
+    }
+    
+  }else{
+    id = sample_sp[[i]][1]
+    sample_time = NA
+  }
+  sample_info = rbind(sample_info,c(id,sample_time))
+}
+sample_info = sample_info[-1,]
+rownames(sample_info) = sampleNames
+rownames(seqtabNoC) = sampleNames
+```
+
+```{r}
+Sample.info = readxl::read_xlsx("./Project Database t=0.xlsx",sheet = 1)
+Sample.info$HbA1c...262[which(Sample.info$HbA1c...262 > 50)] = Sample.info$HbA1c...262/10
+```
+
+```{r}
+var_name = c("PD ID", "Age","Sex ID","Cohort Identifier ID","Height (cm)","Weight (kg)","BMI","Ethnicity ID", "Marital Status ID","Education ID","Employment ID","Income ID","Health Insurance ID","Support Services ID","Allied Health in Last Yr ID","Physio ID", "PD Duration","PD Phenotype ID","Late Onset >60 yrs ID","Genetic ID", "Rehabilitation ID", "Dyskinesia ID","On-Off Fluctuation ID","Wearing off ID","Anosmia ID", "Neuroleptic Use ID","PD FHx ID","Pesticide ID", "Current Smoker ID","Prior Smoker ID","Never Smoked ID" ,"No. Cups (day)","EtOH Consumption ID","EtOH < 1 weekly ID","EtOH 1-6 days week ID","EtOH Daily ID", "Diabetes ID","DM Duration (years)","HbA1c...111", "Medication PD Rx ID","L-Dopa ID","Duodopa ID","DBS ID","Apomorphine ID","Dopamine Agonist ID","MAOB ID","Anticholinergic ID","COMT ID","Amantidine ID", "Physical Functioning","Role Functioning_Physical","Energy_Fatigue","Emotional Well-being","Social Functioning","General Health","Health Change","Physical Component Summary"  ,"Pain","Chronic Pain ID","Pain Score","Walk 1 km ID","Climb 1 flight stairs ID","IPAQ MET-min/week","IPAQ Sitting hr/day","IPAQ Category Score ID", "Beck's Depression Inventory","Depressed ID","MOCA Visuospacial","MOCA Naming","MOCA Attention","MOCA Language","MOCA Abstraction","MOCA Delayed Recall","MOCA Orientation","MOCA total score","Mild Cognitive Impairment ID","PD Dementia ID", "Constipation ID...74","Constipation ID...170","Cleveland Constipation Score","Strinaing ID","Hard Stools ID","Incomplete Evacucation ID","Manual Manoeuvres ID","Spontaneous bowel mvts / week ID","Rome IV Total Score","LDQ Score","Most troublesome symptom ID","Bristol Score", "NMSS Cardiovascular","NMSS Sleep and fatigue","NMSS Mood and cognition","NMSS Perceptual problems","NMSS Attention and Memory","NMSS Gastrointestinal","NMSS Urinary","NMSS Sexual","NMSS Miscellaneous","NMSS Total Score", "PDQ Mobility","PDQ ADL","PDQ Emotions","PDQ Stigma","PDQ Social","PDQ Cognitions","PDQ Communication","PDQ Body Pain","PDQ Summary Index", "UPDRS Speech","UPDRS Facial Expression","UPDRS Rigidity","UPDRS Finger Tapping","UPDRS Hand Movements","UPDRS Pronation Supination","UPDRS Toe Tapping","UPDRS Leg Agility","UPDRS Rising from Chair","UPDRS Gait","UPDRS Freezing","UPDRS Postural Stability","UPDRS Posture","UPDRS Body Bradykinesia","UPDRS Postural Hand Tremor","UPDRS Kinetic Hand Tremor","UPDRS Rest Tremor","UPDRS Consistancy of Rest Tremor","UPDRS Total Score","Hoehn and Yahr Stage","ESR","CRP","Total Cholesterol", "LDL", "HDL", "Glucose", "Trigs", "HbA1c...262", "Albumin","ICD ID","RBD ID","OT ID","Speech Pathologist ID","Dietician ID","Pack YHx","Type of Tabaco ID","Last Abx use (months)","Telemedicine Interest ID","Distance to clinic (km)","Total LED (mg)","Head Trauma ID","Vegetarian Diet ID","Tot_Energy_with_Dietary_Fibre_kJ_per_day","Tot_Energy_without_Dietary_Fibre_kJ_per_day","Tot_Moisture","Tot_Protein_g_per_day","Tot_Fat_g_per_day","Tot_Fibre_g_per_day","Tot_Alcohol_g_per_day","Tot_of_Total_Sugars_g_per_day","Tot_Free_Sugars_g_per_day","Tot_Added_Sugars_g_per_day","Tot_Avail_Carbs_g_per_day","Tot_Calcium_mg_per_day","Tot_Iron_mg_per_day","Tot_Magn_mg_per_day","Tot_Potas_mg_per_day","Tot_Sodium_mg_per_day","Tot_Zinc_mg_per_day","Tot_Retinol_ug_per_day","Tot_Beta_car_ug_per_day","Tot_Vit_A_RE_ug_per_day","Tot_Thiamin_mg_per_day","Tot_Ribo_mg_per_day","Tot_B12_ug_per_day","Tot_Dietary_Folate_ug_per_day","Tot_Vit_C_mg_per_day")
+
+idx = match(sample_info$id,Sample.info$`Neurogenetics ID`)
+
+sample_info = cbind(sample_info,Sample.info[idx,var_name])
+
+#colnames(sample_info)[1:2] = c("id","t","Sex","Age","PD","Cohort","PD_Age")
+colnames(sample_info)[c(1,2,5,4,3,6)] = c("id","t","Sex","Age","PD","Treatment")
+```
+
+
+
+```{r}
+ps0 <- phyloseq(otu_table(seqtabNoC, taxa_are_rows=FALSE), 
+               sample_data(sample_info), 
+               tax_table(taxTab),phy_tree(fitGTR$tree))
+temp_dim <- dim(ps0@otu_table)
+```
+
+```{r}
+ps <- subset_samples(ps0, t == 0)
+ps@sam_data$PD[is.na(ps@sam_data$PD)] = "no"
+ps@sam_data$Treatment[is.na(ps@sam_data$Treatment)] = "Longitudinal"
+ps@sam_data$PD[ps@sam_data$PD == "yes"] = "PD"
+ps@sam_data$PD[ps@sam_data$PD == "no"] = "HC"
+```
+
+103 PD, 81 HC, 3 replicate
+
+```{r}
+D = data.frame(rank = rank_names(ps), number = 0)
+for(i in 1:length(rank_names(ps))){
+  D[i,2] = length(table(ps@tax_table[,i]))
+}
+D %>% kable() %>% kable_styling()
+```
+
+```{r}
+ps <- subset_taxa(ps, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+
+prevdf = apply(X = otu_table(ps),
+               MARGIN = ifelse(taxa_are_rows(ps), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(ps),
+                    tax_table(ps))
+
+#colnames(prevdf) = c("Prevalence","Total Abundance")
+
+prevdf_phylum = plyr::ddply(prevdf, "Phylum", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+colnames(prevdf_phylum) = c("Phylum","Mean of Prevalence", "Sum of Prevalence")
+
+prevdf_phylum %>% kable() %>% kable_styling()
+```
+
+```{r}
+filterPhyla = c("Elusimicrobia","Spirochaetes","Candidatus_Saccharibacteria","Cyanobacteria/Chloroplast")
+# Filter entries with unidentified Phylum.
+ps1 = subset_taxa(ps, !Phylum %in% filterPhyla)
+
+prevdf1 = subset(prevdf, Phylum %in% get_taxa_unique(ps1, "Phylum"))
+ggplot(prevdf1, aes(TotalAbundance, Prevalence / nsamples(ps),color=Phylum)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.1, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~Phylum) + theme(legend.position="none") + theme_bw()
+```
+
+```{r}
+prevalenceThreshold = floor(0.1 * nsamples(ps))
+keepTaxa = rownames(prevdf1)[(prevdf1$Prevalence >= prevalenceThreshold)]
+ps2 = prune_taxa(keepTaxa, ps)
+temp_dim = dim(ps2@otu_table)
+```
+
+```{r}
+ps3 = prune_samples(!(sample_names(ps2) %in% c("18-033-t-0-rpt2", "18-069-t-0-rpt2", "18-033-t-0-rpt3", "18-069-t-0-rpt3")),ps2)
+ps3@sam_data$Treatment[ps3@sam_data$Treatment == "Longitudinal"] = "Control"
+```
+
+```{r}
+pslog <- transform_sample_counts(ps3, function(x) log(1 + x))
+psra <- transform_sample_counts(ps3, function(x){x / sum(x)})
+```
+
+# Relative Box Plot
+
+Figure: Mean relative abundance differences, PD vs control. Both for family and order levels.
+
+```{r}
+bccolsF <- c(brewer.pal(name = "BrBG", n = 10)[c(1, 3, 4, 5, 8)], brewer.pal(name = "PRGn", n =
+10)[c(1, 3, 5, 8, 10)], "gray75")
+```
+
+
+```{r}
+RelAbundChart <- function(psra, level = "Phylum", maxAbd = 10, minprop = 0.05, mode = 1){
+  
+  psra_glom <- tax_glom(psra, taxrank = level)
+  psra_melt <- psmelt(psra_glom)
+  level1 <- rlang::sym(level)
+  psra_melt1 <- psra_melt %>% group_by(!!level1, PD, Sample)  %>% summarise(mean = mean(Abundance))
+  psra_melt0 <- psra_melt %>% group_by(!!level1) %>% summarise(mean = mean(Abundance))
+  
+  if(mode == 2){
+    level_sel <- as.vector(as.matrix(psra_melt0[psra_melt0[,"mean"]>=minprop,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(PD) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      psra_check1 <- psra_melt2 %>% group_by(Sample, PD) %>% summarise(mean = sum(mean))
+      other <- psra_check1 %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      other <- data.frame(other)
+      psra_melt2 <- data.frame(psra_melt2)
+      psra_melt1 <- rbind(psra_melt2,other)
+    }
+    
+    
+  }else if(mode == 1){
+      psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+      level_sel <- as.vector(as.matrix(psra_melt0[1:min(maxAbd,nrow(psra_melt0)),1]))
+      psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+      psra_check <- psra_melt2 %>% group_by(PD) %>% summarise(mean = sum(mean))
+      if(nrow(psra_melt2) <= nrow(psra_melt1)){
+        psra_check1 <- psra_melt2 %>% group_by(Sample, PD) %>% summarise(mean = sum(mean))
+        other <- psra_check1 %>% mutate(!!level1 := "Other taxa")
+        other[,"mean"] = 1 - other[,"mean"]
+        other <- data.frame(other)
+        psra_melt2 <- data.frame(psra_melt2)
+        psra_melt1 <- rbind(psra_melt2,other)
+    }
+
+  }
+  else{
+    psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+    level_ind <- intersect(1:min(maxAbd,nrow(psra_melt0)),which(psra_melt0[,"mean"]>=minprop))
+    level_sel <- as.vector(as.matrix(psra_melt0[level_ind,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(PD) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      psra_check1 <- psra_melt2 %>% group_by(Sample, PD) %>% summarise(mean = sum(mean))
+      other <- psra_check1 %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      other <- data.frame(other)
+      psra_melt2 <- data.frame(psra_melt2)
+      psra_melt1 <- rbind(psra_melt2,other)
+  }
+  }
+  psra_melt1[,level] = factor(as.character(as.vector((as.matrix(psra_melt1[,level])))),levels = c(unique(as.character(as.vector((as.matrix(psra_melt2[,level]))))),"Other taxa"))
+  return(psra_melt1) 
+}
+```
+
+```{r}
+psra_melt_Gen <- RelAbundChart(psra, "Genus", maxAbd = 10, mode = 1)
+psra_melt_Fam <- RelAbundChart(psra, "Family", maxAbd = 10, mode = 1)
+psra_melt_Ord <- RelAbundChart(psra, "Order", maxAbd = 10, mode = 1)
+psra_melt_Phy <- RelAbundChart(psra, "Phylum", maxAbd = 10, mode = 1)
+#psra_melt_Ord <- RelAbundChart(psra, "Order", maxAbd = 10, mode = 1)
+```
+
+```{r}
+relative_boxplt <- function(data,title,level = "Family"){
+    level1 <- rlang::sym(level)
+    p <- ggplot(data) +
+        geom_boxplot(aes(x = !!level1, y = mean, fill = PD)) +
+        xlab(level) +
+        ylab("Abundance") +
+        coord_flip() +
+        scale_fill_manual(values = c("#BF812D", "aquamarine4", "#9970AB")) +
+        guides(fill = guide_legend(ncol = 1)) +
+        ggtitle(title) +
+        theme_bw(base_size = 11) +
+        theme(axis.text.x = element_text(color = "black"),
+        strip.background = element_rect(fill = "white"),
+        panel.grid = element_blank(),
+        legend.text.align = 0,
+        legend.key.height = unit(4, "mm"),
+        legend.key.width = unit(4, "mm"),
+        legend.text = element_text(size = 9),
+        legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+    return(p)
+}
+```
+
+```{r}
+p_Gen <- relative_boxplt(psra_melt_Gen,"A.Genus",level = "Genus") + scale_y_continuous(limits = c(0,1))
+p_Fam <- relative_boxplt(psra_melt_Fam,"B.Family",level = "Family")+ scale_y_continuous(limits = c(0,1))
+p_Ord <- relative_boxplt(psra_melt_Ord,"C.Order",level = "Order")+ scale_y_continuous(limits = c(0,1))
+p_Phy <- relative_boxplt(psra_melt_Phy,"D.Phylum",level = "Phylum")+ scale_y_continuous(limits = c(0,1))
+
+```
+
+```{r}
+fig1 <- arrangeGrob(p_Gen,p_Fam,p_Ord,p_Phy,ncol = 1)
+grid.arrange(fig1)
+ggsave(fig1, filename = "./stage2/figure1.pdf",width = 12, height = 16, units = "in")
+tiff(filename = "./stage2/figure1.tiff" ,width=12, height=16, units="in", compression="lzw", res=150)
+grid.arrange(fig1)
+dev.off()
+```
+
+```{r}
+grid.arrange(fig1)
+```
+
+
+
+# Sample Plot
+
+```{r}
+sample_plot <- function(data, title, level = "Family"){
+  level1 <- rlang::sym(level)
+  data_order <- data[data[,1] == data[1,1],]
+  data_order$PD <- as.factor(data_order$PD)
+  data_order <- data_order %>% group_by(PD) %>% dplyr::arrange(desc(mean),.by_group = T)
+  sample_ord <- data_order$Sample
+  data$Sample <- factor(data$Sample,levels = sample_ord)
+  p <- ggplot(data) +
+        geom_bar(aes(x = Sample, y = mean, fill = !!level1, group = PD), position = "stack", stat = "identity") +
+        xlab("Sample") +
+        ylab("Abundance") +
+        scale_fill_manual(values = bccolsF)  +
+        ggtitle(title) +
+        theme_bw(base_size = 11) +
+        theme(axis.text.x = element_blank(),
+        strip.background = element_rect(fill = "white"),
+        panel.grid = element_blank(),
+        legend.text.align = 0,
+        legend.key.height = unit(4, "mm"),
+        legend.key.width = unit(4, "mm"),
+        legend.text = element_text(size = 9),
+        legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+    return(p)
+}
+```
+
+```{r}
+p_Gen_Sample <- sample_plot(psra_melt_Gen,"A.Genus",level = "Genus")
+p_Fam_Sample <- sample_plot(psra_melt_Fam,"B.Family",level = "Family")
+p_Ord_Sample <- sample_plot(psra_melt_Ord,"C.Order",level = "Order")
+p_Phy_Sample <- sample_plot(psra_melt_Phy,"D.Phylum",level = "Phylum")
+```
+
+```{r}
+fig1_Sample <- arrangeGrob(p_Gen_Sample,p_Fam_Sample,p_Ord_Sample,p_Phy_Sample,ncol = 1)
+grid.arrange(fig1_Sample)
+ggsave(fig1_Sample, filename = "./stage2/figure1_Sample.pdf",width = 12, height = 16, units = "in")
+tiff(filename = "./stage2/figure1_Sample.tiff" ,width=12, height=16, units="in", compression="lzw", res=150)
+grid.arrange(fig1_Sample)
+dev.off()
+```
+
+```{r}
+grid.arrange(fig1_Sample)
+```
+
+# firmicutes/bacteroidetes ratio
+
+Figure for the firmicutes/bacteroidetes ratio. Is there a difference between PD vs control
+
+```{r}
+psphy <- tax_glom(psra, "Phylum")
+phymelt <- psmelt(psphy)
+phymelt1 <- phymelt[phymelt$Phylum %in% c("Firmicutes","Bacteroidetes"),c("Sample","Abundance","PD","Phylum")] %>% group_by(Sample, PD, Phylum) %>% summarise(Abundance = mean(Abundance)) 
+phymelt2 <- phymelt1 %>% spread(Phylum,Abundance)
+
+marker <- phymelt2 %>% group_by(Sample, PD) %>% summarise(`Firmicutes/Bacteroidetes` = Firmicutes/Bacteroidetes)
+marker <- marker[-109,]
+
+p1 <- ggplot(data = marker) +  geom_histogram(aes(x = `Firmicutes/Bacteroidetes`, y = ..density.., fill = PD),alpha = 0.4,bins = 40) + geom_density(aes(x = `Firmicutes/Bacteroidetes`, fill = PD), alpha = 0.6) + theme(axis.text.x = element_text(angle = 45)) + theme_bw()  + labs(x = "",y = "Firmicutes/Bacteroidetes") +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_fill_manual(values = c("#BF812D", "aquamarine4", "#9970AB"))
+```
+
+```{r}
+fig2 <- p1
+ggsave(fig2, filename = "./stage2/figure2.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./stage2/figure2.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+grid.arrange(fig2)
+dev.off()
+```
+
+```{r}
+grid.arrange(fig2)
+```
+
+# Alpha diversity
+
+Figure for alpha diversity, Shannon and Simpson indexes. Is there a difference between PD vs control
+
+```{r}
+S_shannon <- vegan::diversity(ps3@otu_table, index = "shannon", MARGIN = 1)
+S_simpson <- vegan::diversity(ps3@otu_table, index = "simpson", MARGIN = 1)
+
+D_alpha <- ps3@sam_data
+D_alpha <- as.data.frame(as.matrix(D_alpha))
+D_shannon <- D_alpha
+D_shannon$shannon <- S_shannon
+D_simpson <- D_alpha
+D_simpson$simpson <- S_simpson
+
+D_shannon1 <- D_shannon[,c("PD","shannon")]
+D_shannon1$index <- "shannon"
+D_shannon1$PD <- as.character(D_shannon1$PD)
+D_shannon1$PD[D_shannon1$PD == "yes"] = "PD"
+D_shannon1$PD[D_shannon1$PD == "no"] = "Control"
+colnames(D_shannon1)[2] = "value"
+D_simpson1 <- D_simpson[,c("PD","simpson")]
+D_simpson1$index <- "simpson"
+D_simpson1$PD <- as.character(D_simpson1$PD)
+D_simpson1$PD[D_simpson1$PD == "yes"] = "PD"
+D_simpson1$PD[D_simpson1$PD == "no"] = "Control"
+colnames(D_simpson1)[2] = "value"
+D_alpha1 <- rbind(D_shannon1,D_simpson1)
+p1 <- ggplot(data = D_shannon1) + geom_boxplot(aes(x = PD,y = value,fill = PD), width = 0.2) + labs(x = "",y = "shannon diversity") + theme_bw() + theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "white", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_fill_manual(values = c("#BF812D", "aquamarine4", "#9970AB")) + guides(fill = F)
+
+p2 <- ggplot(data = D_simpson1) + geom_boxplot(aes(x = PD,y = value,fill = PD), width = 0.2) + labs(x = "",y = "simpson diversity") + theme_bw() + theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "white", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_fill_manual(values = c("#BF812D", "aquamarine4", "#9970AB")) + guides(fill = F)
+```
+
+```{r}
+fig3 <- ggpubr::ggarrange(p1,p2,ncol = 2,common.legend = T)
+ggsave(fig3, filename = "./stage2/figure3.pdf",width = 12, height = 8, units = "in")
+tiff(filename = "./stage2/figure3.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig3
+dev.off()
+```
+
+```{r}
+fig3
+```
+
+```{r}
+fit_shannon <- aov(formula = shannon ~ PD, data = D_shannon)
+
+anova(fit_shannon)
+```
+
+```{r}
+fit_simpson <- aov(formula = simpson ~ PD, data = D_simpson)
+
+anova(fit_simpson)
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, Tot_Added_Sugars_g_per_day >= 38)
+ps_sub2 <- subset_samples(ps3, Tot_Added_Sugars_g_per_day < 38)
+```
+
+```{r}
+S_shannon11 <- vegan::diversity(ps_sub1@otu_table, index = "shannon", MARGIN = 1)
+S_simpson11 <- vegan::diversity(ps_sub1@otu_table, index = "simpson", MARGIN = 1)
+
+S_shannon21 <- vegan::diversity(ps_sub2@otu_table, index = "shannon", MARGIN = 1)
+S_simpson21 <- vegan::diversity(ps_sub2@otu_table, index = "simpson", MARGIN = 1)
+```
+
+```{r}
+
+```
+
+
+# Beta diversity
+
+Figure for beta diversity, PCoA plots for PD vs control
+
+```{r}
+out.pcoa <- ordinate(psra,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig40 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+```
+
+```{r}
+fig40
+```
+
+```{r}
+pddisOTU <- vegdist(as.data.frame(as.matrix(otu_table(psra))))
+```
+
+```{r}
+adTPPD_noconf_OTUs <- adonis2(pddisOTU ~ sample_data(psra)[["PD"]] , perm = 9999, by = "margin")
+adTPPD_noconf_OTUs
+```
+
+
+
+```{r}
+psra1 <- subset_samples(ps3, Tot_Energy_without_Dietary_Fibre_kJ_per_day >= 10000)
+psra2 <- subset_samples(ps3, Tot_Energy_without_Dietary_Fibre_kJ_per_day < 10000)
+```
+
+```{r}
+out.pcoa <- ordinate(psra1,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra1@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig41 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+```
+
+```{r}
+fig41
+```
+
+
+```{r}
+out.pcoa <- ordinate(psra2,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra2@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3, color = PD), size = 2) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = PD, color = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig42 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+```
+
+```{r}
+fig42
+```
+
+
+
+```{r}
+fig4 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig4, filename = "./stage2/figure4.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./stage2/figure4.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig4
+dev.off()
+```
+
+```{r}
+fig4
+```
+
+```{r}
+psra_PD <- subset_samples(psra, PD =="PD")
+out.pcoa <- ordinate(psra_PD,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra_PD@sam_data) %>% group_by(id) %>% arrange(PD.Phenotype.ID,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = PD.Phenotype.ID), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = PD.Phenotype.ID, color = PD.Phenotype.ID, lty = PD.Phenotype.ID), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = PD.Phenotype.ID), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD.Phenotype.ID, color = PD.Phenotype.ID, lty = PD.Phenotype.ID), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3, color = PD.Phenotype.ID), size = 2) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = PD.Phenotype.ID, color = PD.Phenotype.ID, lty = PD.Phenotype.ID), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+pddisOTU_PD <- vegdist(as.data.frame(as.matrix(otu_table(psra_PD))))
+```
+
+```{r}
+adTPPD_noconf_OTUs <- adonis2(pddisOTU_PD ~ sample_data(psra)[["PD.Phenotype.ID"]] , perm = 9999, by = "margin")
+adTPPD_noconf_OTUs
+```
+
+```{r}
+fig5 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig5, filename = "./stage2/figure5.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./stage2/figure5.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig5
+dev.off()
+```
+
+```{r}
+fig5
+```
+
+
+# Adonis2
+
+```{r}
+clinical.df <- ps3@sam_data[,-c(1,2,6)]
+clinical.df <- as.data.frame(as.matrix(clinical.df))
+id <- ps3@sam_data$id
+PD <- ps3@sam_data$PD
+PD = ifelse(PD == "PD", 1, 0)
+t <- ps3@sam_data$t
+Treatment <- ps3@sam_data$Treatment
+vartype <- c()
+
+for (i in 1:ncol(clinical.df)){
+  Y = as.character(clinical.df[,i])
+  test = as.numeric(Y)
+  if (sum(is.na(clinical.df[,i])) > 0.2*ncol(clinical.df)){
+    if (sum(is.na(clinical.df[PD == 1,i])) <= 0.2*sum(PD == 1)){
+      Y1 = Y[PD == 1]
+      test1 = as.numeric(Y1)
+      if(sum(is.na(test1)) < 10){
+        vartype[i] = "PD continuous"
+    
+      }else{
+        vartype[i] = "PD discrete"
+      }
+    }else{
+      vartype[i] = "missing"
+    }
+  }else if(sum(is.na(test)) < 10){
+    vartype[i] = "continuous"
+    
+  }else{
+    vartype[i] = "discrete"
+  }
+}
+names(vartype) = colnames(clinical.df)
+```
+
+```{r}
+adonisTP_P <- c()
+testtype <- c()
+for (i in 1:ncol(clinical.df)){
+#  print(i)
+  if (vartype[i] == "discrete"|vartype[i] == "PD discrete"){
+    pddis1 <- vegdist(as.data.frame(as.matrix(otu_table(subset_samples(ps3,
+!is.na(clinical.df[,i]))))))
+  adonisTP_P[i] <- adonis2(pddis1 ~ clinical.df[!is.na(clinical.df[,i]),i], perm = 999,by = "margin")$`Pr(>F)`
+  testtype[i] <- "adonis"
+  }else if(vartype[i] == "continuous"|vartype[i] == "PD continuous"){
+    pddis1 <- vegdist(as.data.frame(as.matrix(otu_table(subset_samples(ps3,
+!is.na(clinical.df[,i]))))))
+    test = as.numeric(as.character(clinical.df[!is.na(clinical.df[,i]),i]))
+    pddis2 <- outer(test,test,"-")^2
+    adonisTP_P[i] = vegan::mantel(pddis1,pddis2,method = "spearman",permutations = 999)$signif
+    testtype[i] <- "mantel"
+  }
+}
+```
+
+```{r}
+adonisTP_P_adj <- p.adjust(adonisTP_P,method = "BH")
+adonis_res <- data.frame(varname = names(vartype),vartype = vartype,testtype = testtype, pvalue = adonisTP_P,pvalue.adj = adonisTP_P_adj)
+```
+
+```{r}
+pclinical <- c()
+testtype_clinical <- c()
+for (i in 1:length(vartype)){
+  if (vartype[i] == "discrete"){
+    table_res = table(clinical.df[!is.na(clinical.df[,i]),i],PD[!is.na(clinical.df[,i])])
+    pclinical[i] <- fisher.test(table_res,simulate.p.value = T)$p.value
+    testtype_clinical[i] <- "fisher"
+  }else if(vartype[i] == "PD discrete"){
+    if(colnames(clinical.df)[i] == "PD.Phenotype.ID"){
+      pclinical[i] <- 0
+      testtype_clinical[i] <- "fisher"
+    }else{
+      table_res = table(clinical.df[!is.na(clinical.df[,i]),i],clinical.df$PD.Phenotype.ID[!is.na(clinical.df[,i])])
+      pclinical[i] <- fisher.test(table_res,simulate.p.value = T)$p.value
+      testtype_clinical[i] <- "fisher"
+    }
+    
+  }else if(vartype[i] == "continuous"){
+    pclinical[i] <- wilcox.test(as.numeric(as.character(clinical.df[!is.na(clinical.df[,i]),i]))~PD[!is.na(clinical.df[,i])])$p.value
+    testtype_clinical[i] <- "wilcox"
+  }else if(vartype[i] == "PD continuous"){
+    pclinical[i] <- kruskal.test(as.numeric(as.character(clinical.df[!is.na(clinical.df[,i]),i]))~clinical.df$PD.Phenotype.ID[!is.na(clinical.df[,i])])$p.value
+    testtype_clinical[i] <- "Kruskal-Wallis"
+  }
+}
+```
+
+```{r}
+pclinical_P_adj <- p.adjust(pclinical,method = "BH")
+clinical_res <- data.frame(varname = names(vartype),vartype = vartype,testtype = testtype_clinical, pvalue_clinical = pclinical,pvalue_clinical_adj = pclinical_P_adj)
+```
+
+```{r}
+res <- data.frame(varname = names(vartype),vartype = vartype,testtype_clinical = testtype_clinical, pvalue_clinical = pclinical,pvalue_clinical_adj = pclinical_P_adj,testtype = testtype, pvalue = adonisTP_P,pvalue_adj = adonisTP_P_adj)
+```
+
+
+```{r}
+p <- ggplot(res) + geom_point(aes(x = pvalue_clinical_adj,y = pvalue_adj,color = vartype,label = varname)) + theme_bw() + labs(x = "Test on PD&PD phenotype", y = "Test on beta-diversity")
+ggplotly(p)
+```
+
+# Kamila For finding subclusters
+
+Some problem occured and cannot run....
+
+```{r}
+library(kamila)
+```
+
+```{r}
+clinical.pd <- clinical.df[PD == 1,]
+conDf <- as.data.frame(matrix(0,nrow = nrow(clinical.pd)))
+catDf <- as.data.frame(matrix(0,nrow = nrow(clinical.pd)))
+for(i in 1:length(vartype)){
+  if((vartype[i] == "discrete")|(vartype[i] == "discrete PD")){
+    temp <- data.frame(clinical.pd[,i])
+    catDf <- cbind(catDf,temp)
+  }else if((vartype[i] == "continuous")|(vartype[i] == "continuous PD")){
+    temp <- data.frame(as.numeric(as.character(clinical.pd[,i])))
+    conDf <- cbind(conDf,temp)
+  }
+}
+catDf = catDf[,-c(1,2)]
+conDf = conDf[,-1]
+```
+
+```{r}
+for (i in 1:ncol(conDf)){
+  if (sum(is.na(conDf[,i]))!=0)
+  {
+    conDf[is.na(conDf[,i]),i] = median(conDf[,i],na.rm = T)
+  }
+}
+#kamila(conVar = as.data.frame(scale(conDf)), catFactor = catDf, numClust = 2, numInit = 10)
+```
+
+
+# Vocalno plot
+
+```{r}
+library(ALDEx2)
+```
+
+
+```{r}
+vocalno_data <- function(data, level = "Phylum",idx = 2, fc_thresh = 1, p_thresh = 0.05){
+    pstax <- tax_glom(ps3, level)
+    ps_table = t(as.data.frame(pstax@otu_table))
+    rownames(ps_table) = pstax@tax_table[,idx]
+    
+    meta_data = pstax@sam_data
+    meta_data1 <- as.data.frame(as.matrix(meta_data))
+
+    meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+    mm <- model.matrix(id ~  PD , meta_data1)
+    ps_aldex <- aldex(ps_table, meta_data$PD, mc.samples=128, test="t",
+                       effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+    df_ps <- ps_aldex[,c("diff.btw","wi.ep","we.ep")]
+
+    return(df_ps)
+}
+```
+
+```{r}
+vocalno_plot <- function(df_ps,title = "A."){
+    color = rep("1",nrow(df_ps))
+    color[(abs(df_ps$diff.btw)>1)&(df_ps$wi.ep<0.05)] = "2"
+    df_anno = df_ps[(abs(df_ps$diff.btw)>1)&(df_ps$wi.ep<0.05),]
+    p = ggplot(df_ps) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle(title)
+    return(p)
+}
+```
+
+```{r}
+df_gen <- vocalno_data(psra, level = "Genus",idx = 6)
+p_gen <- vocalno_plot(df_gen,title = "Genus.") + xlim(c(-2.5,2.5)) + ylim(c(0,12.7))
+
+df_fam <- vocalno_data(psra, level = "Family",idx = 5)
+p_fam <- vocalno_plot(df_fam,title = "Family.")+ xlim(c(-2.5,2.5)) + ylim(c(0,12.7))
+
+df_ord <-vocalno_data(psra, level = "Order",idx = 4)
+p_ord <- vocalno_plot(df_ord,title = "Order.")+ xlim(c(-2.5,2.5)) + ylim(c(0,12.7))
+
+df_phy <-vocalno_data(psra, level = "Phylum",idx = 4)
+p_phy <- vocalno_plot(df_phy,title = "Phylum.")+ xlim(c(-2.5,2.5)) + ylim(c(0,12.7))
+```
+
+```{r}
+write.csv(df_gen,file = "./stage2/vocalno_genus.csv")
+write.csv(df_fam,file = "./stage2/vocalno_family.csv")
+write.csv(df_ord,file = "./stage2/vocalno_order.csv")
+write.csv(df_phy,file = "./stage2/vocalno_phylum.csv")
+```
+
+
+```{r}
+fig6 <- ggpubr::ggarrange(p_gen,p_fam,p_ord,p_phy,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig6, filename = "./stage2/figure6.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./stage2/figure6.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig6
+dev.off()
+```
+
+```{r}
+fig6
+```
+
+
+# Correlation/WGCNA
+
+## Ordinary correlation
+
+```{r}
+library(qtlcharts)
+```
+
+```{r}
+psgen <- tax_glom(psra, "Genus")
+colnames(psgen@otu_table) <- psgen@tax_table[,6]
+psgen.df <- as.data.frame(as.matrix(psgen@otu_table))
+psgen.corr <- cor(psgen.df, method="spearman")
+
+```
+
+```{r}
+group <- psgen@sam_data$PD
+
+iplotCorr(psgen.df,group, corr=psgen.corr, reorder = F,
+          chartOpts=list(cortitle="Spearman correlation",
+                         scattitle="Scatterplot"))
+```
+
+## Rho correlation
+
+In compositional data analysis, it is more meaningful using other type of correlation. Here, we choose rho correlation.
+
+```{r}
+library(propr)
+```
+
+```{r}
+psgen_count <- tax_glom(ps3, "Genus")
+colnames(psgen_count@otu_table) <- psgen_count@tax_table[,6]
+psgen_count.df <- as.data.frame(as.matrix(psgen_count@otu_table))
+psgen_count.rho <- perb(psgen_count.df)
+```
+
+```{r}
+iplotCorr(psgen.df,group, corr=psgen_count.rho@matrix, reorder = F,
+          chartOpts=list(cortitle="Rho correlation",
+                         scattitle="Scatterplot"))
+```
+
+## Clinical correlation
+
+```{r}
+psra1 <- subset_samples(psra,!is.na(Age))
+psgen <- tax_glom(psra1, "Genus")
+colnames(psgen@otu_table) <- psgen@tax_table[,6]
+psgen.df <- as.data.frame(as.matrix(psgen@otu_table))
+```
+
+
+```{r}
+clinical.df <- psgen@sam_data[,-c(1,2,6)]
+clinical.df <- as.data.frame(as.matrix(clinical.df))
+cont_idx <- c()
+discrete_idx <- c()
+for (i in 1:ncol(clinical.df)){
+    clinical.df[,i] <- as.character(clinical.df[,i])
+    
+    if (length(unique(clinical.df[,i])) >= 5){
+        cont_idx <- c(cont_idx, i)
+        clinical.df[,i] <- as.numeric(clinical.df[,i])
+    }else{
+        discrete_idx <- c(discrete_idx,i)
+        clinical.df[,i] <- as.factor(clinical.df[,i])
+    }
+}
+
+```
+
+```{r}
+clinical_cont <- clinical.df[,cont_idx]
+clinical_cont <- as.data.frame(t(na.omit(t(as.matrix(clinical_cont)))))
+clinical_cor <- cor(clinical_cont, method = "spearman")
+
+group <- clinical.df$PD
+iplotCorr(clinical_cont, group, corr=clinical_cor, reorder = F,
+          chartOpts=list(cortitle="Spearman correlation",
+                         scattitle="Scatterplot"))
+```
+
+## Clinical Microbiome Correlation
+
+```{r}
+clinical_micro_df <- cbind(clinical_cont,psgen.df)
+clinical_micro_cor <- cor(clinical_cont,psgen.df, method = "spearman")
+```
+
+```{r}
+group <- clinical.df$PD
+iplotCorr(clinical_micro_df, group, corr=clinical_micro_cor, reorder = F,
+          chartOpts=list(cortitle="Spearman correlation",
+                         scattitle="Scatterplot"))
+```
+
+
+## WGCNA
+
+```{r}
+library(WGCNA)
+```
+
+
+```{r}
+softPower <- 3
+
+adjacency = adjacency(psgen.df, power = softPower)
+TOM = TOMsimilarity(adjacency)
+
+dissTOM = 1-TOM
+hierTOM = hclust(as.dist(dissTOM),method="average")
+```
+
+```{r}
+geneTree = hclust(as.dist(dissTOM), method = "average")
+
+minModuleSize = 5;
+
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+                            deepSplit = 2, pamRespectsDendro = FALSE,
+                            minClusterSize = minModuleSize);
+
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+plotDendroAndColors(geneTree,dynamicColors,"Module colors",
+                      dendroLabels = FALSE, hang = 0.03,
+                      addGuide = TRUE, guideHang = 0.05)
+```
+
+```{r}
+MEList = moduleEigengenes(psgen.df, colors = dynamicColors)
+MEs = MEList$eigengenes
+MEDiss = 1-cor(MEs)
+METree = hclust(as.dist(MEDiss), method = "average")
+plotEigengeneNetworks(MEs, 
+                      "Eigengene adjacency heatmap", 
+                      marHeatmap = c(3,4,2,2), 
+                      plotDendrograms = FALSE, 
+                      xLabelsAngle = 90) 
+```
+
+```{r}
+moduleTraitCor_noFP <- cor(MEs, clinical_cont, use = "p")
+moduleTraitPvalue_noFP = corPvalueStudent(moduleTraitCor_noFP,183); 
+moduleTraitCor_noFP <- as.data.frame(t(na.omit(t(as.matrix(moduleTraitCor_noFP)))))
+moduleTraitPvalue_noFP <- as.data.frame(t(na.omit(t(as.matrix(moduleTraitPvalue_noFP)))))
+par(mar = c(10, 8.5, 3, 3)); 
+labeledHeatmap(Matrix = moduleTraitCor_noFP, 
+               xLabels = colnames(moduleTraitCor_noFP), 
+               yLabels = names(MEs), 
+               ySymbols = names(MEs), 
+               colorLabels = FALSE, 
+               colors = blueWhiteRed(50), 
+               setStdMargins = FALSE, 
+               cex.text = 0.65, 
+               zlim = c(-1,1), 
+               main = paste("Module-trait relationships")) 
+```
+
+
+# Univariate analysis
+
+## Constipation
+
+Are patients who are more constipated or have lower Bristol score have distinct bacterial profiles?
+
+```{r}
+out.pcoa <- ordinate(psra,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p_bristol.score <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Bristol.Score, shape = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, lty = PD), level = 0.9) + scale_color_gradientn(colors = cm.colors(256, alpha = 1))
+
+p_bristol.score
+
+p_constipation1 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = Constipation.ID...74), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"), name = "Constipation1")
+
+p_constipation1
+
+p_constipation2 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = Constipation.ID...170), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, lty = PD), level = 0.9) + scale_color_manual(values = brewer.pal(2, "Set2"), name = "Constipation2")
+
+p_constipation2
+
+```
+
+
+## Physical index
+
+Older vs younger patients, smaller vs larger BMI have different bacterial profiles?
+
+```{r}
+out.pcoa <- ordinate(psra,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p_Age <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Age, shape = PD), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, lty = PD), level = 0.9) + scale_color_gradientn(colors = cm.colors(256, alpha = 1))
+
+p_Age
+
+p_BMI <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3, color = BMI), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = PD, lty = PD), level = 0.9) + scale_color_gradientn(colors = cm.colors(256, alpha = 1))
+
+p_BMI
+
+```
+
+## Lasso
+```{r}
+library(glmnet)
+eps = 1e-9
+
+psgen1 <- tax_glom(psra1,"Genus")
+psgen1.df <- as.data.frame(as.matrix(psgen1@otu_table))
+colnames(psgen1.df) <- psgen1@tax_table[,6]
+
+psgen1.df_log <- log(psgen1.df + eps)
+psgen1.df_log <- scale(psgen1.df_log)
+```
+
+```{r}
+#ps3asin <- transform_sample_counts(psra,)
+```
+
+```{r echo=F,message=F,warning=F,error=F}
+X <- scale(psgen1.df_log)
+cv_m <- c()
+cv_sd <- c()
+nonzero <- c()
+vartype <- c()
+#beta_all <- matrix(0, nrow = ncol(X), ncol = ncol(clinical.df))
+for(i in 1:ncol(clinical.df)){
+
+    Y <- as.character(clinical.df[,i])
+    test <- as.numeric(Y)
+    if (sum(is.na(test)) < length(Y)/2){
+       
+        Y <- scale(test)
+        D <- cbind(Y,X)
+        D <- as.matrix(na.omit(D))
+         if(var(D[,1]) == 0){
+          cv_m[i] <- -1
+          cv_sd[i] <- -1
+          nonzero[i] <- -1
+          vartype[i] <- "constant"
+          next()
+        } 
+        beta <- cv.glmnet(y = D[,1],x = D[,-1])
+        vartype[i] <- "continuous"
+    }else{
+        Y <- as.factor(Y)
+  #      Y <- model.matrix(1:length(Y)~Y)[,-1]
+        D <- cbind(Y,X)
+        D <- as.matrix(na.omit(D))
+        beta <- try(cv.glmnet(y = D[,1],x = D[,-1],family = "multinomial",intercept = F))
+        if (class(beta) == "try-error"){
+          cv_m[i] <- -1
+          cv_sd[i] <- -1
+          nonzero[i] <- -1
+          vartype[i] <- "discrete"
+          next()
+        }
+                    
+        vartype[i] <- "discrete"
+    }
+    idx <- which(beta$lambda == beta$lambda.1se)
+    cv_m[i] <- beta$cvm[idx]
+    cv_sd[i] <- beta$cvsd[idx]
+    nonzero[i] <- beta$nzero[idx]
+
+}
+```
+
+```{r}
+D0 <- data.frame(var_name = colnames(clinical.df),cv_m = cv_m,cv_sd = cv_sd, nonzero = nonzero, vartype = vartype)
+```
+
+```{r}
+D0 %>% kable() %>% kable_styling()
+```
+
+
+## RF
+
+```{r}
+clinical_rf <- function(D, mode = "discrete"){
+  train_sub <- sample(nrow(D),7/10*nrow(D))
+  train_data <- D[train_sub,]
+  test_data <- D[-train_sub,]
+  if(mode == "discrete"){
+    Y <- as.factor(D[,1])
+    my_rf <- randomForest(x = train_data[,-1],y = Y[train_sub],ntree = 500, importance = T)
+    pred_rf <- predict(my_rf,test_data[,-1])
+    acc_rf <- confusionMatrix(pred_rf, Y[-train_sub])$overal["Accuracy"]
+    importance <- my_rf$importance[,4]
+  }else{
+    my_rf <- randomForest(x = train_data[,-1],y = train_data[,1],ntree = 500, importance = T)
+    pred_rf <- predict(my_rf,test_data[,-1])
+    acc_rf <- 1 - (sum((pred_rf-test_data[,1])^2)/length(test_data[,1]))/var(test_data[,1])
+    importance <- my_rf$importance[,2]
+  }
+  return(list(acc <- acc_rf, importance <- importance))
+}
+```
+
+
+```{r}
+X <- scale(psgen1.df_log)
+acc_m <- c()
+vip <- matrix(0,nrow = ncol(X),ncol = ncol(clinical.df))
+vartype <- c()
+#beta_all <- matrix(0, nrow = ncol(X), ncol = ncol(clinical.df))
+for(i in 1:ncol(clinical.df)){
+  
+    if (sum(is.na(clinical.df[,i])) > length(Y)*0.3){
+      next()
+    }
+  
+    Y <- as.character(clinical.df[,i])
+    
+    test <- as.numeric(Y)
+    if (sum(is.na(test)) < length(Y)/2){
+       
+        Y <- scale(test)
+        D <- cbind(Y,X)
+        D <- as.matrix(na.omit(D))
+         if(var(D[,1]) == 0){
+          cv_m[i] <- -1
+          cv_sd[i] <- -1
+          nonzero[i] <- -1
+          vartype[i] <- "constant"
+          next()
+        } 
+        res_rf <- clinical_rf(D, "continuous")
+        vartype[i] <- "continuous"
+    }else{
+        Y <- as.factor(Y)
+  #      Y <- model.matrix(1:length(Y)~Y)[,-1]
+        D <- cbind(Y,X)
+        D <- as.matrix(na.omit(D))
+        res_rf <- clinical_rf(D,"discrete")            
+        vartype[i] <- "discrete"
+    }
+    
+    acc_m[i] <- res_rf[[1]]
+    vip[,i] <- res_rf[[2]]
+
+}
+```
+
+```{r}
+acc_df <- data.frame(acc_m,vartype)
+rownames(acc_df) <- colnames(clinical.df)
+p_acc <-ggplot(acc_df) + geom_bar(aes(x = rownames(acc_df),y = acc_m, fill = vartype),stat="identity") + theme_bw() + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())
+ggplotly(p_acc)
+```
+
+```{r}
+rownames(vip) <- colnames(psgen.df)
+colnames(vip) <- colnames(clinical.df)
+
+vip_df_melt <- reshape2::melt(vip)
+p_vip <- ggplot(vip_df_melt) + geom_tile(aes(x = Var1, y = Var2, fill = value)) + scale_fill_gradientn(colors = brewer.pal(9,"YlGnBu")) + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+ggplotly(p_vip)
+```
+
+
+
+
+# Clinical for prediction
+If we only use continuous clinical variables, whether we can predict PD?
+```{r}
+clinical.df1 <- as.data.frame(t(na.omit(t(as.matrix(clinical.df[,D0$vartype == "continuous"])))))
+for(i in 1:length(clinical.df1)){
+  clinical.df1[,i] <- as.numeric(clinical.df1[,1])
+}
+beta <- cv.glmnet(x = as.matrix(clinical.df1),y = clinical.df$PD,family = "binomial")
+
+idx1 <- which(beta$lambda == beta$lambda.1se)
+cv_m1 <- beta$cvm[idx1]
+cv_sd1 <- beta$cvsd[idx1]
+nonzero1 <- beta$nzero[idx1]
+```
+There are `r nonzero1` clinical variables selected in Lasso model (Y=PD,X=continuous clinical variables).
+
+
+# Diet
+
+Do certain dietary data reflect particular bacterial profiles?
+
+```{r}
+eps = 1e-9
+Diet <- as.matrix(psra1@sam_data[,(ncol(psra1@sam_data)-24):ncol(psra1@sam_data)])
+#
+psgen1 <- tax_glom(psra1,"Genus")
+psgen1.df <- as.data.frame(as.matrix(psgen1@otu_table))
+colnames(psgen1.df) <- psgen1@tax_table[,6]
+
+psgen1.df_log <- log(psgen1.df + eps)
+psgen1.df_log <- scale(psgen1.df_log)
+
+Diet_scale <- scale(Diet)
+
+X <- list(Genus = as.matrix(psgen1.df_log), Diet = as.matrix(Diet_scale))
+    
+Y <- as.factor(psra1@sam_data$PD)
+
+list.keepX <- list(Genus = c(5,15), Diet = c(5,15))
+```
+
+```{r}
+Diet1 <- as.data.frame(Diet)
+ggplot(Diet1) + geom_point(aes(x = Tot_Protein_g_per_day,y = Tot_Fat_g_per_day,color = clinical.df$PD)) + theme_bw()
+```
+
+
+```{r}
+MyResult.diablo <- block.splsda(X, Y, keepX=list.keepX)
+plot(MyResult.diablo)
+```
+
+```{r}
+plotIndiv(MyResult.diablo)
+```
+
+```{r}
+plotVar(MyResult.diablo)
+```
+
+```{r}
+plotLoadings(MyResult.diablo)
+```
+
+## Diet2
+
+```{r}
+#exclude_sample <- c("18/103")
+#ps31 <- subset_samples(ps3,(!(id %in% exclude_sample))&!(is.na(Age)))
+#D_micro <- as.matrix(vegdist(ps31@otu_table))
+```
+
+```{r}
+#Diet_1 <- as.matrix(ps31@sam_data[,(ncol(ps31@sam_data)-24):ncol(ps31@sam_data)])
+#BMI_1 <- as.matrix(ps31@sam_data$BMI)
+#gen1 <- tax_glom(ps31,"Genus")
+#gen1.df <- as.data.frame(as.matrix(gen1@otu_table))
+#colnames(gen1.df) <- as.vector(gen1@tax_table[,6])
+#gen1.df <- as.matrix(gen1.df)
+```
+
+```{r}
+#alpha = rnorm(ncol(gen1.df))
+#res <- dm_lm_bvs_R(x = scale(Diet_1[,-c(1,2)]), y = scale(BMI_1), z = gen1.df, alpha = alpha)
+```
+
+```{r}
+#select <- selected( res, burnin = 500,plotting = T )
+```
+
+```{r}
+#select$selected_zeta
+#select$selected_xi
+```
+
+```{r}
+#colnames(gen1.df)[select$selected_zeta[,1]]
+#colnames(Diet_1)[2+select$selected_zeta[,2]]
+#colnames(gen1.df)[select$selected_xi]
+```
+
+
+# Medicine
+
+Are some Parkinson's medications associated with a changed microbiota in Parkinson's disease patients. ie levodopa, COMT, duodopa
+
+```{r}
+psra2 <- subset_samples(psra1, PD == "PD")
+
+psgen2 <- tax_glom(psra2,"Genus")
+psgen2.df <- as.data.frame(as.matrix(psgen2@otu_table))
+colnames(psgen2.df) <- psgen2@tax_table[,6]
+
+psgen2.df_log <- log(psgen2.df + eps)
+psgen2.df_log <- scale(psgen2.df_log)
+
+```
+
+```{r}
+Med <- as.matrix(psra2@sam_data[,c("L.Dopa.ID","Duodopa.ID","COMT.ID","Anticholinergic.ID","MAOB.ID","Dopamine.Agonist.ID","Apomorphine.ID","DBS.ID")])
+Med[Med == "yes"] = 1
+Med[Med == "no"] = 0
+Med <- as.data.frame(Med)
+for (i in 1:ncol(Med)){
+    Med[,i] <- as.numeric(as.character(Med[,i]))
+}
+```
+
+```{r}
+Freq1 <- rowSums(Med)
+Freq2 <- colSums(Med)
+```
+
+```{r}
+D1 <- data.frame(table(Freq1))
+colnames(D1) <- c("Num_Med","Tot_Num")
+```
+
+```{r}
+ggplot(D1) + geom_bar(aes(x = Num_Med, y = Tot_Num),stat="identity", fill = "gray70") + theme_bw() 
+```
+
+```{r}
+D2 <- data.frame(Med = names(Freq2), Tot_Num = Freq2)
+#colnames(D2) <- c("Med","Tot_Num")
+```
+
+```{r}
+ggplot(D2) + geom_bar(aes(x = Med, y = Tot_Num), stat="identity", fill = "gray70") + theme_bw()+ theme(axis.text.x = element_text(angle = 45,vjust = 1) )
+```
+
+```{r}
+Cooccur <- t(as.matrix(Med)) %*% as.matrix(Med)
+Cooccur <- melt(Cooccur)
+colnames(Cooccur) <- c("Med1","Med2","Freq")
+ggplot(Cooccur) + geom_tile(aes(x = Med1, y = Med2, fill = Freq)) + theme_bw() + scale_fill_gradientn(colours = brewer.pal(9,"YlGnBu")) + theme(axis.text.x = element_text(angle = 45,vjust = 1))
+```
+
+```{r}
+Med_scale <- scale(Med)
+
+X <- as.matrix(psgen2.df_log)
+    
+Y <- as.matrix(Med_scale)
+
+```
+
+```{r}
+MyResult.spls <- spls(X, Y, ncomp=10)
+
+MyPerf.spls <- perf(MyResult.spls, validation = "Mfold", folds = 3, 
+                  progressBar = FALSE, nrepeat = 50)
+
+matplot(MyPerf.spls$Q2.total, type = 'l', lty = 1, 
+        col = color.mixo(1:3), 
+        main = 'Balanced Error rate')
+
+
+```
+
+```{r}
+list.keepX <- c(5:10,  seq(20, 50, 10))
+tune.spls <- tune.spls(X, Y, ncomp = 2, # we suggest to push ncomp a bit more, e.g. 4
+                                 validation = 'Mfold',
+                                 folds = 3,  progressBar = FALSE, test.keepX = list.keepX,
+                                 nrepeat = 10)
+```
+
+```{r}
+select.keepX <- tune.spls$choice.keepX[1:2]
+MyResult.spls <- spls(X, Y, ncomp = 2, keepX = select.keepX)
+```
+
+```{r}
+plotIndiv(MyResult.spls)
+```
+
+```{r}
+plotVar(MyResult.spls)
+```
+
+```{r}
+plotLoadings(MyResult.spls)
+```
+
+```{r}
+#network(MyResult.spls,comp = 1,cutoff = 0.1, save = 'jpeg', name.save = 'PLSnetwork')
+```
+
+# Medicine
+
+Modeling as M=M0+f(Med*W)+E?
+
+If patient with same medicine have similar microbiome profile?
+```{r}
+out.pcoa <- ordinate(psra2,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra2@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p_med <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = L.Dopa.ID, shape = DBS.ID), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, lty = L.Dopa.ID), level = 0.9)
+
+p_med
+```
+
+A possible method for this model
+```{r}
+ps_med <- tax_glom(psra2,"Genus")
+```
+
+```{r}
+gen_med <- as.data.frame(as.matrix(ps_med@otu_table))
+colnames(gen_med) <- ps_med@tax_table[,6]
+
+gen_med_log <- log(gen_med + eps)
+gen_med_log <- scale(gen_med_log)
+```
+
+```{r}
+gen_med_isa <- denoiseR::ISA(gen_med_log,noise = "Gaussian",delta = 0.5)
+```
+
+```{r}
+gen_med_log0 <- gen_med_isa$mu.hat
+gen_med <- gen_med_log - gen_med_log0
+```
+
+```{r}
+Med1 <- as.matrix(Med)
+W <- coef(lm(scale(gen_med)~Med1 - 1))
+#R0 <- summary(lm(scale(gen_med)~Med1 - 1))$`Response Klebsiella`$r.squared
+```
+
+```{r}
+W_melt = reshape2::melt(W)
+
+p_med <- ggplot(W_melt) + geom_tile(aes(x = Var1, y = Var2, fill = value)) + scale_fill_gradientn(colors = brewer.pal(9,"YlGnBu")) + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+ggplotly(p_med)
+```
+
+```{r}
+W1 <- coef(lm(scale(gen_med_log)~Med1 - 1))
+#R1 <- summary(lm(scale(gen_med_log)~Med1 - 1))$`Response Klebsiella`$r.squared
+```
+
+```{r}
+W_melt = reshape2::melt(W1)
+
+p_med <- ggplot(W_melt) + geom_tile(aes(x = Var1, y = Var2, fill = value)) + scale_fill_gradientn(colors = brewer.pal(9,"YlGnBu")) + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+ggplotly(p_med)
+```
+
+```{r}
+Diet2 <- scale(as.matrix(psra2@sam_data[,(ncol(psra2@sam_data)-21):ncol(psra2@sam_data)]))
+W_all <- coef(lm(scale(gen_med)~ scale(Med1) + scale(Diet2) - 1))
+```
+
+
+
+```{r}
+W_melt = reshape2::melt(W_all)
+
+p_med <- ggplot(W_melt) + geom_tile(aes(x = Var1, y = Var2, fill = value)) + scale_fill_gradientn(colors = brewer.pal(9,"YlGnBu")) + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+ggplotly(p_med)
+```
+
+```{r}
+W0 <- coef(lm(scale(gen_med) ~ scale(Med1) - 1))
+W1 <- coef(lm(scale(gen_med_log0) ~ scale(Diet2) - 1))
+W_all2 <- rbind(W0, W1)
+```
+
+```{r}
+W_melt = reshape2::melt(W_all2)
+
+p_med <- ggplot(W_melt) + geom_tile(aes(x = Var1, y = Var2, fill = value)) + scale_fill_gradientn(colors = brewer.pal(9,"YlGnBu")) + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+ggplotly(p_med)
+```
+
+# No medcine take
+
+```{r}
+  
+out.pcoa <- ordinate(psra2,  method = "MDS", distance = "bray")
+evals <- out.pcoa$values[,1]
+df = cbind(out.pcoa$vectors[,1:3],psra2@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p_Med <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Medication.PD.Rx.ID), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2), level = 0.9) + scale_color_manual(values = brewer.pal(2,"Set2"))
+```
+
+```{r}
+p_Med
+```
+
+```{r}
+gen_med <- as.data.frame(gen_med)
+gen_med_trans <- lapply(gen_med, function(col){
+  exp(col)/sum(exp(col))
+})
+gen_med_trans <- as.data.frame(gen_med_trans)
+```
+
+```{r}
+out.pcoa <- vegan::monoMDS(vegan::vegdist(gen_med_trans), k = 3)
+var_explained = out.pcoa$values$Relative_eig[1:3]
+df = cbind(out.pcoa$points[,1:3],psra2@sam_data) %>% group_by(id) %>% arrange(PD,.by_group = TRUE)
+#var_explained = out.pcoa$values$Relative_eig[1:3]
+
+p_Med <- ggplot(df) + geom_point(aes(x = MDS1, y = MDS2, color = Medication.PD.Rx.ID), size = 2)  +  theme_classic()  + stat_ellipse(aes(x = MDS1, y = MDS2), level = 0.9) + scale_color_manual(values = brewer.pal(2,"Set2"))
+```
+
+```{r}
+p_Med
+```
+
+
+# Score
+
+Are features of increased disease severity associated with specific bacterial abundances? ie. Longer PD duration, higher total LED, higher UPDRS total score, higher PDQ total score, higher NMSS scores.
+
+```{r}
+Score <- as.matrix(psra2@sam_data[,92:129])
+Score <- as.data.frame(Score)
+for (i in 1:ncol(Score)){
+    Score[,i] <- as.numeric(as.character(Score[,i]))
+}
+```
+
+```{r}
+Score_scale <- scale(Score)
+
+X <- as.matrix(psgen2.df_log)
+    
+Y <- as.matrix(Score_scale)
+```
+
+
+```{r}
+D = cbind(Y,X)
+D = na.omit(D)
+
+MyResult.spls1 <- spls(X = D[,-1], D[,1], ncomp=10)
+
+MyPerf.spls <- perf(MyResult.spls1, validation = "Mfold", folds = 3, 
+                  progressBar = FALSE, nrepeat = 50)
+
+matplot(MyPerf.spls$Q2.total, type = 'l', lty = 1, 
+        col = color.mixo(1:3), 
+        main = 'Balanced Error rate')
+
+
+```
+
+```{r}
+list.keepX <- c(5:10,  seq(20, 50, 10))
+tune.spls1 <- tune.spls(D[,-1], D[,1], ncomp = 2, # we suggest to push ncomp a bit more, e.g. 4
+                                 validation = 'Mfold',
+                                 folds = 3,  progressBar = FALSE, test.keepX = list.keepX,
+                                 nrepeat = 10)
+```
+
+```{r}
+select.keepX1 <- tune.spls1$choice.keepX[1:2]
+MyResult.spls1 <- spls(X, Y, ncomp = 2, keepX = select.keepX)
+```
+
+```{r}
+plotIndiv(MyResult.spls1)
+```
+
+```{r}
+plotVar(MyResult.spls1)
+```
+
+```{r}
+plotLoadings(MyResult.spls1)
+```
+
+
+# PLSDA 
+
+## PLSDA PD phenotype
+
+```{r}
+eps = 1e-9
+
+psra2 <- subset_samples(psra1, PD == "PD")
+
+psgen2 <- tax_glom(psra2,"Genus")
+psgen2.df <- as.data.frame(as.matrix(psgen2@otu_table))
+colnames(psgen2.df) <- psgen2@tax_table[,6]
+
+psgen2.df_log <- log(psgen2.df + eps)
+psgen2.df_log <- scale(psgen2.df_log)
+
+Diet <- as.matrix(psra2@sam_data[,(ncol(psra2@sam_data)-24):ncol(psra2@sam_data)])
+#
+
+Diet_scale <- scale(Diet)
+
+Med <- as.matrix(psra2@sam_data[,c("L.Dopa.ID","Duodopa.ID","COMT.ID","Anticholinergic.ID","MAOB.ID","Dopamine.Agonist.ID","Apomorphine.ID","DBS.ID")])
+Med[Med == "yes"] = 1
+Med[Med == "no"] = 0
+Med <- as.data.frame(Med)
+for (i in 1:ncol(Med)){
+    Med[,i] <- as.numeric(as.character(Med[,i]))
+}
+
+Score <- as.matrix(psra2@sam_data[,92:129])
+Score <- as.data.frame(Score)
+for (i in 1:ncol(Score)){
+    Score[,i] <- as.numeric(as.character(Score[,i]))
+}
+
+X <- list(Genus = as.matrix(psgen2.df_log), Diet = as.matrix(Diet_scale), Medcine = Med, Score = Score)
+    
+Y <- as.factor(psra2@sam_data$PD.Phenotype.ID)
+
+list.keepX <- list(Genus = c(5,15), Diet = c(5,15))
+
+
+```
+
+```{r}
+MyResult.diablo <- block.splsda(X, Y, keepX=list.keepX)
+plot(MyResult.diablo)
+```
+
+```{r}
+plotIndiv(MyResult.diablo)
+```
+
+```{r}
+plotVar(MyResult.diablo,cex = c(2,2,2,2))
+```
+
+```{r}
+plotLoadings(MyResult.diablo)
+```
+
+
+
+
+# RF & SVM
+
+
+```{r}
+perm = function(perm_r, micro, PD, nCV= 50){
+  micro = scale(micro)
+  PD = factor(PD)
+  
+  res_rf <- matrix(nrow = nCV, ncol = 5)
+  res_svm <- matrix(nrow = nCV, ncol = 5)
+  for(i in 1:nCV){
+    train_id <- sample(1:nrow(micro), 7/10*nrow(micro))
+    train_micro <- micro[train_id,]
+    test_micro <- micro[-train_id,]
+    
+    PD_train <- PD[train_id]
+    PD_test <- PD[-train_id]
+    
+    train_perm_id <- sample(length(train_id), (perm_r)*length(train_id))
+    train_perm <- 1:length(train_id)
+    train_perm[train_perm_id] <- train_perm[sample(train_perm_id,length(train_perm_id))]
+    
+    PD_train_perm <- PD_train[train_perm]
+    
+    my_rf <- randomForest(x = train_micro,y = PD_train_perm)
+    rf_prob <- predict(my_rf,newdata = test_micro, type = "prob")
+    rf_res <- predict(my_rf,newdata = test_micro)
+    
+    my_svm <- svm(x = train_micro, y = PD_train_perm, type = 'C',kernel = 'radial',probability = T)
+    svm_res <- predict(my_svm, newdata = test_micro, probability = T)
+    svm_prob <- attr(svm_res,"probabilities")
+    
+    predob_rf <- prediction(rf_prob[,"PD"], as.numeric(PD_test) - 1)
+    predob_svm <- prediction(svm_prob[,"PD"], as.numeric(PD_test) - 1)
+      
+    perf_rf<- performance(predob_rf, measure = "auc", x.measure = 'cutoff')@y.values[[1]]
+    perf_svm<- performance(predob_svm, measure = "auc", x.measure = 'cutoff')@y.values[[1]]
+      
+    conf_rf <- confusionMatrix(PD_test, rf_res)
+    conf_svm <- confusionMatrix(PD_test, svm_res)
+    
+    res_rf[i,] <- c(conf_rf$overall["Accuracy"], conf_rf$byClass["Sensitivity"], conf_rf$byClass["Specificity"], conf_rf$byClass["F1"], perf_rf)
+    
+    res_svm[i,] <- c(conf_svm$overall["Accuracy"], conf_svm$byClass["Sensitivity"], conf_svm$byClass["Specificity"], conf_svm$byClass["F1"], perf_rf)
+    
+    colnames(res_rf) = c("Accuracy", "Sensitivity", "Specificity","F1", "AUC")
+    colnames(res_svm) = c("Accuracy", "Sensitivity", "Specificity","F1", "AUC")
+  }
+  return(list(res_rf = res_rf, res_svm = res_svm))
+}
+```
+
+
+```{r}
+roc_data <- function(micro, PD, nCV= 50){
+  micro = scale(micro)
+  PD = factor(PD)
+  
+  res_train_rf <- data.frame(prob = 0, actual = 1)
+  res_train_svm <- data.frame(prob = 0, actual = 1)
+  
+  res_test_rf <- data.frame(prob = 0, actual = 1)
+  res_test_svm <- data.frame(prob = 0, actual = 1)
+  
+  for(i in 1:nCV){
+    train_id <- sample(1:nrow(micro), 7/10*nrow(micro))
+    train_micro <- micro[train_id,]
+    test_micro <- micro[-train_id,]
+    
+    PD_train <- PD[train_id]
+    PD_test <- PD[-train_id]
+    
+    my_rf <- randomForest(x = train_micro,y = PD_train)
+    rf_train_prob <- my_rf$votes
+    rf_train_res <- my_rf$predicted
+    rf_test_prob <- predict(my_rf,newdata = test_micro, type = "prob")
+    rf_test_res <- predict(my_rf,newdata = test_micro)
+    
+    my_svm <- svm(x = train_micro, y = PD_train, type = 'C',kernel = 'radial',probability = T)
+    svm_train_res <- predict(my_svm, newdata = train_micro, probability = T)
+    svm_train_prob <- attr(svm_train_res,"probabilities")
+    svm_test_res <- predict(my_svm, newdata = test_micro, probability = T)
+    svm_test_prob <- attr(svm_test_res,"probabilities")
+    
+    temp_train_rf <- data.frame(prob = rf_train_prob[,"PD"], actual = as.numeric(PD_train) - 1)
+    temp_train_svm <- data.frame(prob = svm_train_prob[,"PD"], actual = as.numeric(PD_train) - 1)
+    temp_test_rf <- data.frame(prob = rf_test_prob[,"PD"], actual = as.numeric(PD_test) - 1)
+    temp_test_svm <- data.frame(prob = svm_test_prob[,"PD"], actual = as.numeric(PD_test) - 1)
+    rownames(temp_train_rf) = NULL
+    rownames(temp_train_svm) = NULL
+    rownames(temp_test_rf) = NULL
+    rownames(temp_test_svm) = NULL
+    
+    res_train_rf <- rbind(res_train_rf, temp_train_rf)
+    res_train_svm <- rbind(res_train_svm, temp_train_svm)
+  
+    res_test_rf <- rbind(res_test_rf, temp_test_rf)
+    res_test_svm <- rbind(res_test_svm, temp_test_svm)  
+    
+  }
+  res_train_rf = res_train_rf[-1,]
+  res_train_svm = res_train_svm[-1,]
+  res_test_rf = res_test_rf[-1,]
+  res_test_svm = res_test_svm[-1,]
+  
+  return(list(res_train_rf = res_train_rf, res_train_svm = res_train_svm, res_test_rf = res_test_rf,res_test_svm = res_test_svm))
+}
+```
+
+```{r}
+perm_rs = c(0,0.1,0.2,0.5,0.7,1)
+```
+
+
+## Phylum
+
+```{r}
+trans_comp <- function(X, eps = 1e-4, method = "asin", scale = T){
+  
+  X <- as.matrix(X)
+  
+  if(method == "clr"){
+    
+    X[X <= eps] <- eps
+    
+    X_trans <- t(scale(log(t(X))))
+    
+  }else if(method == "asin"){
+    
+    X_trans <- asin(sqrt(X))
+  }
+
+  if(scale){
+    X_trans <- scale(X_trans)
+  }
+  
+  return(X_trans)
+}
+```
+
+```{r}
+CV_pred <- function(df, y = y){
+  
+  n <- nrow(df)
+  df <- as.matrix(df)
+  
+  pred <- matrix(0, nrow = n, ncol = 4)
+  
+  for(i in 1:n){
+    X_train <- df[-i, ]
+    X_test <- matrix(df[i,], nrow =  1)
+    
+    y_train <- y[-i]
+    y_test <- y[i]
+    
+    lasso_fit <- cv.glmnet(X_train, y_train, family = "binomial")
+    pred[i,1] <- predict(object = lasso_fit, newx = X_test, type = "response", s = "lambda.1se") 
+    
+    svm_fit <- svm(X_train, y = y_train, kernel = "radial", probability = TRUE, type = "C-classification")
+    pred_svm <- predict(object = svm_fit, X_test, probability = TRUE)
+    pred[i,2] <- attr(pred_svm, "probabilities")[1,"1"]
+    
+    rf_fit <- randomForest(x = X_train, y = y_train, ntree = 500)
+    pred[i,3] <- predict(rf_fit, X_test, type="response")
+    
+    pred[i,4] <- y_test
+  }
+  
+  colnames(pred) <- c("lasso", "svm", "random forest", "actual")
+  return(pred)
+}
+```
+
+```{r}
+rocpdf<- function(df, method = "random forest", gd = "actual", model_name = method){
+  
+    pred <- df[,method]
+    truth <- df[,gd]
+    predob<- prediction(pred, truth)
+    perf.auc<- performance(predob, measure = 'auc', x.measure = 'cutoff')
+    #
+    perf<- performance(predob, 'tpr','fpr')
+    df<- data.frame(x = attributes(perf)$x.values[[1]],y = attributes(perf)$y.values[[1]], model = model_name)  
+#    p    <- ggplot(data = df)
+#    p + geom_line(aes(x,y),colour = "yellowgreen",size = 1) + 
+#        geom_ribbon(aes(x,ymin = 0,ymax = y),fill = alpha("yellowgreen",0.5)) +
+#        labs(title = paste("ROC Curve & AUC:",(perf.auc@y.values))) + 
+#        xlab("Specificity") +
+#        ylab("Sensitivity") +
+#        theme(plot.title = element_text(size = 17)) 
+    return(list(df = df, auc = perf.auc@y.values[[1]]))
+}
+```
+
+
+
+```{r}
+CV_ROC <- function(ps3){
+  
+  idx_exc <- c("18-093-t-0", "18-099-t-0", "18-264-t-0", "18-261-t-0", "19-017-t-0", "18-033-t-0", "18-087-t-0", "18-098-t-0", "18-103-t-0", "18-122-t-0", "18-137-t-0", "18-149-t-0", "18-255-t-0", "18-256-t-0", "17-085-t-0", "18-282-t-0", "19-001-t-0", "19-201-t-0", "18-108-t-0")
+  
+  ps_test <- subset_samples(ps3, !(sample_names(ps3) %in% idx_exc))
+  n <- nrow(ps_test@sam_data)
+  
+  psphy <- tax_glom(ps_test, taxrank = "Phylum")
+  psphy_ra <- transform_sample_counts(psphy, function(x){x / sum(x)})
+  psphy_df <- psphy_ra@otu_table
+  colnames(psphy_df) <- psphy@tax_table[,2]
+  psphy_df_log <- trans_comp(psphy_df, eps = 1e-5, method = "clr")
+  psphy_df_asin <- trans_comp(psphy_df, eps = 1e-5, method = "asin")
+  
+  psord <- tax_glom(ps_test, taxrank = "Order")
+  psord_ra <- transform_sample_counts(psord, function(x){x / sum(x)})
+  psord_df <- psord_ra@otu_table
+  colnames(psord_df) <- psord@tax_table[,4]
+  psord_df_log <- trans_comp(psord_df, eps = 1e-5, method = "clr")
+  psord_df_asin <- trans_comp(psord_df, eps = 1e-5, method = "asin")
+  
+  psfam <- tax_glom(ps_test, taxrank = "Family")
+  psfam_ra <- transform_sample_counts(psfam, function(x){x / sum(x)})
+  psfam_df <- psfam_ra@otu_table
+  colnames(psfam_df) <- psfam@tax_table[,5]
+  psfam_df_log <- trans_comp(psfam_df, eps = 1e-5, method = "clr")
+  psfam_df_asin <- trans_comp(psfam_df, eps = 1e-5, method = "asin")
+  
+  psgen <- tax_glom(ps_test, taxrank = "Genus")
+  psgen_ra <- transform_sample_counts(psgen, function(x){x / sum(x)})
+  psgen_df <- psgen_ra@otu_table
+  colnames(psgen_df) <- psgen@tax_table[,6]
+  psgen_df_log <- trans_comp(psgen_df, eps = 1e-5, method = "clr")
+  psgen_df_asin <- trans_comp(psgen_df, eps = 1e-5, method = "asin")
+  
+  psotu_ra <- transform_sample_counts(ps_test, function(x){x / sum(x)})
+  psotu_df <- psotu_ra@otu_table
+  colnames(psotu_df) <- paste(psotu_ra@tax_table[,6], paste("o.", 1:ncol(psotu_df), sep = ""), sep = ":")
+  psotu_df_log <- trans_comp(psotu_df, eps = 1e-5, method = "clr")
+  psotu_df_asin <- trans_comp(psotu_df, eps = 1e-5, method = "asin")
+  
+  X_list <- list(psphy_df_log, psphy_df_asin, psord_df_log, psord_df_asin, psfam_df_log, psfam_df_asin, psgen_df_log, psgen_df_asin, psotu_df_log, psotu_df_asin)
+  
+  y <- as.numeric(as.factor(ps_test@sam_data$PD)) - 1
+  
+  CV_pred_func <- purrr::partial(CV_pred, y = y)
+  
+  pred_list <- lapply(X_list, CV_pred_func)
+
+}
+```
+
+
+```{r}
+library(ROCR)
+roc_method <- function(mat){
+  
+  mat <- as.data.frame(mat)
+  n <- nrow(mat)
+  res_roc <- matrix(0, nrow = 1, ncol = 3)
+  roc_lasso <- rocpdf(mat, method = "lasso")
+  roc_svm <- rocpdf(mat, method = "svm")
+  roc_rf <- rocpdf(mat, method = "random forest")
+
+  res_roc <- rbind(roc_lasso$df, roc_svm$df, roc_rf$df)
+  res_auc <- c(roc_lasso$auc, roc_svm$auc, roc_rf$auc)
+  
+  return(list(df = res_roc, auc = res_auc))
+}
+```
+
+```{r}
+roc_res <- lapply(pred_list, roc_method)
+```
+
+```{r}
+
+```
+
+```{r}
+Physiology <- c(1:5)
+Nutrition <- c(103:127)
+
+X1_nutri <- as.data.frame(as.matrix(ps_test@sam_data[,c(4,153:177)]))
+for(i in 1:ncol(X1_nutri)){
+  X1_nutri[,i] <- as.numeric(X1_nutri[,i])
+}
+Z_add <- as.data.frame(X1_nutri)
+Z_add$Pratio <- Z_add[,"Tot_Protein_g_per_day"] * 17 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add$Fratio <- Z_add[,"Tot_Fat_g_per_day"] * 37 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add$Cratio <- Z_add[,"Tot_Avail_Carbs_g_per_day"] * 17 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add <- Z_add[,-2]
+Z_add <- as.matrix(Z_add)
+#Z_add <- scale(Z_add)
+Z <- Z_add
+```
+
+```{r}
+temp1 <- InfoGain_cont(Z[,"Tot_Protein_g_per_day"], y)
+temp2 <- InfoGain_cont(Z[,"Tot_Fat_g_per_day"], y)
+temp3 <- InfoGain_cont(Z[,"Tot_Added_Sugars_g_per_day"], y)
+temp4 <- InfoGain_cont(Z[,"Tot_B12_ug_per_day"], y)
+temp5 <- InfoGain_cont(Z[,"Tot_Potas_mg_per_day"], y)
+temp6 <- InfoGain_cont(Z[,"Tot_Fibre_g_per_day"], y)
+temp7 <- InfoGain_cont(Z[,"Tot_Avail_Carbs_g_per_day"], y)
+temp8 <- InfoGain_cont(Z[,"Pratio"], y)
+temp9 <- InfoGain_cont(Z[,"Fratio"], y)
+temp10 <- InfoGain_cont(Z[,"Cratio"], y)
+```
+
+
+
+```{r}
+CV_split <- function(psfam_df_log){
+  split_var <- c("Tot_Protein_g_per_day", "Tot_Fat_g_per_day", "Tot_Added_Sugars_g_per_day", "Tot_Fibre_g_per_day", "Tot_Avail_Carbs_g_per_day", "Pratio", "Fratio", "Cratio")
+  split_num <- c(temp1$s, temp2$s, temp3$s, temp6$s, temp7$s, temp8$s, temp9$s, temp10$s )
+
+  X <- psfam_df_log
+  n <- nrow(X)
+  
+  pred_split <- matrix(0, nrow = n, ncol = 9)
+  
+  for(i in 1:n){
+    X_train <- X[-i,]
+    X_test <- X[i,]
+    
+    Z_train <- Z[-i,]
+    Z_test <- Z[i,]
+    y_train <- y[-i]
+    y_test <- y[i]
+    
+    
+    for(j in 1:8){
+      idx1 <- which(Z_train[,split_var[j]] > split_num[j])
+      
+      X_train1 <- X_train[idx1,]
+      X_train2 <- X_train[-idx1,]
+      y_train1 <- y_train[idx1]
+      y_train2 <- y_train[-idx1]
+      
+      rf1 <- randomForest(x = X_train1, y = y_train1, ntree = 500)
+      rf2 <- randomForest(x = X_train2, y = y_train2, ntree = 500)
+      
+      sel <- Z_test[split_var[j]] > split_num[j]
+      
+      if(sel){
+        pred_temp <- predict(rf1, X_test)
+      }else{
+        pred_temp <- predict(rf2, X_test)
+      }
+      
+      pred_split[i,j] <- pred_temp
+    }
+    pred_split[i,9] <- y_test
+  }
+  return(pred_split)
+}
+```
+
+```{r}
+colnames(pred_split) <- c("Protein", "Fat", "Sugar", "Fiber", "Carb", "Pratio", "Fratio", "Cratio", "actual")
+```
+
+```{r}
+df_phy <- roc_res[[1]]$df
+df_phy$tax <- "Phylum"
+
+df_ord <- roc_res[[3]]$df
+df_ord$tax <- "Order"
+
+df_fam <- roc_res[[5]]$df
+df_fam$tax <- "Family"
+
+df_gen <- roc_res[[7]]$df
+df_gen$tax <- "Genus"
+
+df_asv <- roc_res[[9]]$df
+df_asv$tax <- "ASV"
+
+df_roc_tax <- rbind(df_phy, df_ord, df_fam, df_gen, df_asv)
+df_auc_tax <- rbind(roc_res[[1]]$auc, roc_res[[3]]$auc, roc_res[[5]]$auc, roc_res[[7]]$auc, roc_res[[9]]$auc)
+```
+
+
+```{r}
+caption_lasso <- paste0("AUC: ", round(df_auc_tax[1,1], 2),"(Phylum), ", round(df_auc_tax[2,1], 2),"(Order), ", round(df_auc_tax[3,1], 2), "(Family), ",round(df_auc_tax[4,1], 2), "(Genus), ",round(df_auc_tax[5,1], 2), "(ASV)")
+
+caption_svm <- paste0("AUC: ", round(df_auc_tax[1,2], 2),"(Phylum), ", round(df_auc_tax[2,2], 2),"(Order), ", round(df_auc_tax[3,2], 2), "(Family), ",round(df_auc_tax[4,2], 2), "(Genus), ",round(df_auc_tax[5,2], 2), "(ASV)")
+
+captionrf <- paste0("AUC: ", round(df_auc_tax[1,3], 2),"(Phylum), ", round(df_auc_tax[2,3], 2),"(Order), ", round(df_auc_tax[3,3], 2), "(Family), ",round(df_auc_tax[4,3], 2), "(Genus), ",round(df_auc_tax[5,3], 2), "(ASV)")
+```
+
+```{r}
+df_svm <- df_roc_tax[df_roc_tax$model == "svm",]
+df_svm$tax <- factor(df_svm$tax, levels = c("Phylum","Order","Family","Genus","ASV"))
+fig_svm <- ggplot(df_svm) + geom_path(aes(x = x,y = y,color = tax),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = caption_svm, title = "LOOCV-ROC curve of SVM model on different taxanomic level")+ scale_color_manual(values = c("#8DD3C7", "#BEBADA","#FB8072","#80B1D3","#FDB462","#B3DE69","#FCCDE5"))
+```
+
+```{r}
+df_rf <- df_roc_tax[df_roc_tax$model == "random forest",]
+df_rf$tax <- factor(df_rf$tax, levels = c("Phylum","Order","Family","Genus","ASV"))
+fig_rf <- ggplot(df_rf) + geom_path(aes(x = x,y = y,color = tax),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = captionrf, title = "LOOCV-ROC curve of Random Forest model on different taxanomic level")+ scale_color_manual(values = c("#8DD3C7", "#BEBADA","#FB8072","#80B1D3","#FDB462","#B3DE69","#FCCDE5"))
+```
+
+
+```{r}
+roc_method <- function(mat){
+  
+  mat <- as.data.frame(mat)
+  n <- nrow(mat)
+  res_roc <- matrix(0, nrow = 1, ncol = 8)
+  roc_protein <- rocpdf(mat, method = "Protein")
+  roc_fat <- rocpdf(mat, method = "Fat")
+  roc_sugar <- rocpdf(mat, method = "Sugar")
+  roc_fiber <- rocpdf(mat, method = "Fiber")
+  roc_carb <- rocpdf(mat, method = "Carb")
+  roc_pr <- rocpdf(mat, method = "Pratio")
+  roc_fr <- rocpdf(mat, method = "Fratio")
+  roc_cr <- rocpdf(mat, method = "Cratio")
+
+  res_roc <- rbind(roc_protein$df, roc_fat$df, roc_sugar$df,roc_fiber$df,roc_carb$df,roc_pr$df,roc_fr$df,roc_cr$df)
+  res_auc <- c(roc_protein$auc, roc_fat$auc, roc_sugar$auc,roc_fiber$auc,roc_carb$auc,roc_pr$auc,roc_fr$auc,roc_cr$auc)
+  
+  return(list(df = res_roc, auc = res_auc))
+}
+```
+
+```{r}
+roc_split <- roc_method(pred_split)
+```
+
+```{r}
+df_temp <- df_rf[df_rf$tax == "Family",]
+df_temp <- df_temp[,-c(3,4)]
+df_temp$model <- "Microbiome"
+```
+
+```{r}
+roc_split_df <- rbind(roc_split$df, df_temp)
+roc_split_df$model <- factor(roc_split_df$model, levels = c("Protein", "Fat", "Sugar", "Fiber", "Fratio", "Cratio","Carb", "Pratio", "Microbiome"))
+```
+
+```{r}
+caption_split <- paste0("AUC: ", round(df_auc_tax[3,3], 2),"(Microbiome, Family), ", round(roc_split$auc[1], 2),"(Protein), ", round(roc_split$auc[2], 2), "(Fat), ",round(roc_split$auc[5], 2), "(Carb), ",round(roc_split$auc[4], 2), "(Fiber), \n", round(roc_split$auc[3], 2), "(Sugar), ",round(roc_split$auc[6], 2), "(Pratio), ",round(roc_split$auc[7], 2), "(Fratio), ",round(roc_split$auc[8], 2), "(Cratio)")
+```
+
+```{r}
+fig_split <- ggplot(roc_split_df) + geom_path(aes(x = x,y = y,color = model),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = caption_split, title = "LOOCV-ROC curve of 2 stage Random Forest model \n with different nutrients as splitting node")+ scale_color_manual(values = c("#FB8072", "#BEBADA","#8DD3C7","#80B1D3","#FDB462","#B3DE69","#FCCDE5","#E5C494", "#FC8D62"))
+```
+
+
+```{r}
+fig_split2 <- ggplot(roc_split_df) + geom_path(aes(x = x,y = y,color = model),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = caption_split, title = "LOOCV-ROC curve of 2 stage Random Forest model \n with different nutrients as splitting node")+ scale_color_manual(values = c("#D9D9D9","#C6DBEF","#E5F5E0","#EFEDF5","#FEE6CE", "#E7E1EF","#A50F15","#08519C", "#006D2C"))
+```
+
+```{r}
+fig_split2
+```
+
+
+```{r}
+ggplot(phy_perm_rf) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "random forest permutation result on Phylum")
+```
+
+```{r}
+ggplot(phy_perm_svm) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "SVM permutation result on Phylum")
+```
+
+```{r}
+roc_phy <- roc_data(psphy_df_log, PD, nCV = 50)
+```
+
+```{r}
+roc_phy_rf_train <- rocpdf(roc_phy$res_train_rf)
+auc_phy_rf_train <- roc_phy_rf_train$auc
+roc_phy_rf_train <- roc_phy_rf_train$df
+
+roc_phy_svm_train <- rocpdf(roc_phy$res_train_svm)
+auc_phy_svm_train <- roc_phy_svm_train$auc
+roc_phy_svm_train <- roc_phy_svm_train$df
+
+roc_phy_rf_test <- rocpdf(roc_phy$res_test_rf)
+auc_phy_rf_test <- roc_phy_rf_test$auc
+roc_phy_rf_test <- roc_phy_rf_test$df
+
+roc_phy_svm_test <- rocpdf(roc_phy$res_test_svm)
+auc_phy_svm_test <- roc_phy_svm_test$auc
+roc_phy_svm_test <- roc_phy_svm_test$df
+```
+
+
+## Order
+
+```{r}
+psord <- tax_glom(psra1,taxrank = "Order")
+psord_df <- as.data.frame(psord@otu_table)
+colnames(psord_df) <- psord@tax_table[,2]
+psord_df_log <- log(psord_df + eps)
+psord_df_log <- scale(psord_df_log)
+PD = psord@sam_data$PD
+```
+
+```{r}
+ord_perm_rf <- data.frame(perm_r = 0, measure = "acc", value = 0)
+ord_perm_svm <- data.frame(perm_r = 0, measure = "acc", value = 0)
+
+for (perm_r in perm_rs){
+  perm_res = perm(perm_r, psord_df_log, PD, nCV = 50)
+  res_rf = melt(perm_res$res_rf)
+  res_rf$Var1 = perm_r
+  res_svm = melt(perm_res$res_svm)
+  res_svm$Var1 = perm_r
+  colnames(res_rf) = c("perm_r","measure","value")
+  colnames(res_svm) = c("perm_r","measure","value")
+  
+  ord_perm_rf = rbind(ord_perm_rf, res_rf)
+  ord_perm_svm = rbind(ord_perm_svm, res_svm)
+}
+ord_perm_rf = ord_perm_rf[-1,]
+ord_perm_svm = ord_perm_svm[-1,]
+ord_perm_rf$perm_r = as.factor(ord_perm_rf$perm_r)
+ord_perm_svm$perm_r = as.factor(ord_perm_svm$perm_r)
+```
+
+```{r}
+ggplot(ord_perm_rf) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "random forest permutation result on Order")
+```
+
+```{r}
+ggplot(ord_perm_svm) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "SVM permutation result on Order")
+```
+
+```{r}
+roc_ord <- roc_data(psord_df_log,PD,nCV = 50)
+```
+
+```{r}
+roc_ord_rf_train <- rocpdf(roc_ord$res_train_rf,taxa = "Order")
+auc_ord_rf_train <- roc_ord_rf_train$auc
+roc_ord_rf_train <- roc_ord_rf_train$df
+
+roc_ord_svm_train <- rocpdf(roc_ord$res_train_svm,taxa = "Order")
+auc_ord_svm_train <- roc_ord_svm_train$auc
+roc_ord_svm_train <- roc_ord_svm_train$df
+
+
+roc_ord_rf_test <- rocpdf(roc_ord$res_test_rf,taxa = "Order")
+auc_ord_rf_test <- roc_ord_rf_test$auc
+roc_ord_rf_test <- roc_ord_rf_test$df
+
+roc_ord_svm_test <- rocpdf(roc_ord$res_test_svm,taxa = "Order")
+auc_ord_svm_test <- roc_ord_svm_test$auc
+roc_ord_svm_test <- roc_ord_svm_test$df
+```
+
+
+## Family
+
+```{r}
+psfam <- tax_glom(psra1,taxrank = "Family")
+psfam_df <- as.data.frame(psfam@otu_table)
+colnames(psfam_df) <- psfam@tax_table[,2]
+psfam_df_log <- log(psfam_df + eps)
+psfam_df_log <- scale(psfam_df_log)
+PD = psfam@sam_data$PD
+```
+
+```{r}
+fam_perm_rf <- data.frame(perm_r = 0, measure = "acc", value = 0)
+fam_perm_svm <- data.frame(perm_r = 0, measure = "acc", value = 0)
+
+for (perm_r in perm_rs){
+  perm_res = perm(perm_r, psfam_df_log, PD, nCV = 50)
+  res_rf = melt(perm_res$res_rf)
+  res_rf$Var1 = perm_r
+  res_svm = melt(perm_res$res_svm)
+  res_svm$Var1 = perm_r
+  colnames(res_rf) = c("perm_r","measure","value")
+  colnames(res_svm) = c("perm_r","measure","value")
+  
+  fam_perm_rf = rbind(fam_perm_rf, res_rf)
+  fam_perm_svm = rbind(fam_perm_svm, res_svm)
+}
+fam_perm_rf = fam_perm_rf[-1,]
+fam_perm_svm = fam_perm_svm[-1,]
+fam_perm_rf$perm_r = as.factor(fam_perm_rf$perm_r)
+fam_perm_svm$perm_r = as.factor(fam_perm_svm$perm_r)
+```
+
+```{r}
+ggplot(fam_perm_rf) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "random forest permutation result on Family")
+```
+
+```{r}
+ggplot(fam_perm_svm) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "SVM permutation result on Family")
+```
+
+```{r}
+roc_fam <- roc_data(psfam_df_log,PD,nCV = 50)
+```
+
+```{r}
+roc_fam_rf_train <- rocpdf(roc_fam$res_train_rf,taxa = "Family")
+auc_fam_rf_train <- roc_fam_rf_train$auc
+roc_fam_rf_train <- roc_fam_rf_train$df
+
+roc_fam_svm_train <- rocpdf(roc_fam$res_train_svm,taxa = "Family")
+auc_fam_svm_train <- roc_fam_svm_train$auc
+roc_fam_svm_train <- roc_fam_svm_train$df
+
+
+roc_fam_rf_test <- rocpdf(roc_fam$res_test_rf,taxa = "Family")
+auc_fam_rf_test <- roc_fam_rf_test$auc
+roc_fam_rf_test <- roc_fam_rf_test$df
+
+roc_fam_svm_test <- rocpdf(roc_fam$res_test_svm,taxa = "Family")
+auc_fam_svm_test <- roc_fam_svm_test$auc
+roc_fam_svm_test <- roc_fam_svm_test$df
+```
+
+
+## Genus
+
+```{r}
+psgen <- tax_glom(psra1,taxrank = "Genus")
+psgen_df <- as.data.frame(psgen@otu_table)
+colnames(psgen_df) <- psgen@tax_table[,2]
+psgen_df_log <- log(psgen_df + eps)
+psgen_df_log <- scale(psgen_df_log)
+PD = psgen@sam_data$PD
+```
+
+```{r}
+gen_perm_rf <- data.frame(perm_r = 0, measure = "acc", value = 0)
+gen_perm_svm <- data.frame(perm_r = 0, measure = "acc", value = 0)
+
+for (perm_r in perm_rs){
+  perm_res = perm(perm_r, psgen_df_log, PD, nCV = 50)
+  res_rf = melt(perm_res$res_rf)
+  res_rf$Var1 = perm_r
+  res_svm = melt(perm_res$res_svm)
+  res_svm$Var1 = perm_r
+  colnames(res_rf) = c("perm_r","measure","value")
+  colnames(res_svm) = c("perm_r","measure","value")
+  
+  gen_perm_rf = rbind(gen_perm_rf, res_rf)
+  gen_perm_svm = rbind(gen_perm_svm, res_svm)
+}
+gen_perm_rf = gen_perm_rf[-1,]
+gen_perm_svm = gen_perm_svm[-1,]
+gen_perm_rf$perm_r = as.factor(gen_perm_rf$perm_r)
+gen_perm_svm$perm_r = as.factor(gen_perm_svm$perm_r)
+```
+
+```{r}
+ggplot(gen_perm_rf) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "random forest permutation result on Genus")
+```
+
+```{r}
+ggplot(gen_perm_svm) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "SVM permutation result on Genus")
+```
+
+```{r}
+roc_gen <- roc_data(psgen_df_log,PD,nCV = 50)
+```
+
+```{r}
+roc_gen_rf_train <- rocpdf(roc_gen$res_train_rf,taxa = "Genus")
+auc_gen_rf_train <- roc_gen_rf_train$auc
+roc_gen_rf_train <- roc_gen_rf_train$df
+
+roc_gen_svm_train <- rocpdf(roc_gen$res_train_svm,taxa = "Genus")
+auc_gen_svm_train <- roc_gen_svm_train$auc
+roc_gen_svm_train <- roc_gen_svm_train$df
+
+
+roc_gen_rf_test <- rocpdf(roc_gen$res_test_rf,taxa = "Genus")
+auc_gen_rf_test <- roc_gen_rf_test$auc
+roc_gen_rf_test <- roc_gen_rf_test$df
+
+roc_gen_svm_test <- rocpdf(roc_gen$res_test_svm,taxa = "Genus")
+auc_gen_svm_test <- roc_gen_svm_test$auc
+roc_gen_svm_test <- roc_gen_svm_test$df
+```
+
+## OTU
+```{r}
+psotu_df <- as.data.frame(psra1@otu_table)
+colnames(psotu_df) <- paste("OTU",1:ncol(psotu_df),sep = ":")
+psotu_df_log <- log(psotu_df + eps)
+psotu_df_log <- scale(psotu_df_log)
+PD = psra1@sam_data$PD
+```
+
+```{r}
+otu_perm_rf <- data.frame(perm_r = 0, measure = "acc", value = 0)
+otu_perm_svm <- data.frame(perm_r = 0, measure = "acc", value = 0)
+
+for (perm_r in perm_rs){
+  perm_res = perm(perm_r, psotu_df_log, PD, nCV = 50)
+  res_rf = melt(perm_res$res_rf)
+  res_rf$Var1 = perm_r
+  res_svm = melt(perm_res$res_svm)
+  res_svm$Var1 = perm_r
+  colnames(res_rf) = c("perm_r","measure","value")
+  colnames(res_svm) = c("perm_r","measure","value")
+  
+  otu_perm_rf = rbind(otu_perm_rf, res_rf)
+  otu_perm_svm = rbind(otu_perm_svm, res_svm)
+}
+otu_perm_rf = otu_perm_rf[-1,]
+otu_perm_svm = otu_perm_svm[-1,]
+otu_perm_rf$perm_r = as.factor(otu_perm_rf$perm_r)
+otu_perm_svm$perm_r = as.factor(otu_perm_svm$perm_r)
+```
+
+```{r}
+ggplot(otu_perm_rf) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "random forest permutation result on OTU")
+```
+
+```{r}
+ggplot(otu_perm_svm) + geom_boxplot(aes(x = perm_r, y = value, fill = measure)) + theme_bw() + labs(x = "ratio of permutated labels", title = "SVM permutation result on OTU")
+```
+
+```{r}
+roc_otu <- roc_data(psotu_df_log,PD,nCV = 50)
+```
+
+```{r}
+roc_otu_rf_train <- rocpdf(roc_otu$res_train_rf,taxa = "OTU")
+auc_otu_rf_train <- roc_otu_rf_train$auc
+roc_otu_rf_train <- roc_otu_rf_train$df
+
+roc_otu_svm_train <- rocpdf(roc_otu$res_train_svm,taxa = "OTU")
+auc_otu_svm_train <- roc_otu_svm_train$auc
+roc_otu_svm_train <- roc_otu_svm_train$df
+
+
+roc_otu_rf_test <- rocpdf(roc_otu$res_test_rf,taxa = "OTU")
+auc_otu_rf_test <- roc_otu_rf_test$auc
+roc_otu_rf_test <- roc_otu_rf_test$df
+
+roc_otu_svm_test <- rocpdf(roc_otu$res_test_svm,taxa = "OTU")
+auc_otu_svm_test <- roc_otu_svm_test$auc
+roc_otu_svm_test <- roc_otu_svm_test$df
+```
+
+## ROC Curve
+
+```{r}
+roc_rf_train <- rbind(roc_phy_rf_train,roc_ord_rf_train, roc_fam_rf_train, roc_gen_rf_train, roc_otu_rf_train)
+```
+
+```{r}
+p_rf_train <- ggplot(data = roc_rf_train) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("RF Training AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_rf_train,2),",", round(auc_ord_rf_train,2),",", round(auc_fam_rf_train,2),",", round(auc_gen_rf_train,2),",", round(auc_otu_rf_train,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_rf_train
+```
+
+```{r}
+roc_rf_test <- rbind(roc_phy_rf_test,roc_ord_rf_test, roc_fam_rf_test, roc_gen_rf_test, roc_otu_rf_test)
+```
+
+```{r}
+p_rf_test <- ggplot(data = roc_rf_test) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("RF Testing AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_rf_test,2),",", round(auc_ord_rf_test,2),",", round(auc_fam_rf_test,2),",", round(auc_gen_rf_test,2),",", round(auc_otu_rf_test,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_rf_test
+```
+
+```{r}
+roc_svm_train <- rbind(roc_phy_svm_train,roc_ord_svm_train, roc_fam_svm_train, roc_gen_svm_train, roc_otu_svm_train)
+```
+
+```{r}
+p_svm_train <- ggplot(data = roc_svm_train) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("SVM training AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_svm_train,2),",", round(auc_ord_svm_train,2),",", round(auc_fam_svm_train,2),",", round(auc_gen_svm_train,2),",", round(auc_otu_svm_train,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_svm_train
+```
+
+```{r}
+roc_svm_test <- rbind(roc_phy_svm_test,roc_ord_svm_test, roc_fam_svm_test, roc_gen_svm_test, roc_otu_svm_test)
+```
+
+```{r}
+p_svm_test <- ggplot(data = roc_svm_test) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("SVM testing AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_svm_test,2),",", round(auc_ord_svm_test,2),",", round(auc_fam_svm_test,2),",", round(auc_gen_svm_test,2),",", round(auc_otu_svm_test,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_svm_test
+```
+
+# SVM
+```{r}
+library(sparseSVM)
+```
+
+## Phylum level only
+```{r}
+psphy <- tax_glom(psra1,taxrank = "Phylum")
+psphy_df <- as.data.frame(psphy@otu_table)
+colnames(psphy_df) <- psphy@tax_table[,2]
+psphy_df_log <- log(psphy_df + eps)
+psphy_df_log <- scale(psphy_df_log)
+
+fit1 <- cv.sparseSVM(X = psphy_df_log, y = clinical.df$PD)
+```
+
+```{r}
+w_phy <- predict(fit1,type = "coefficients")
+res_phy <- as.factor(as.vector(predict(fit1, psphy_df_log)))
+confusionMatrix(clinical.df$PD, res_phy)
+```
+
+## Order level only
+
+```{r}
+psord <- tax_glom(psra1,taxrank = "Order")
+psord_df <- as.data.frame(psord@otu_table)
+colnames(psord_df) <- psord@tax_table[,2]
+psord_df_log <- log(psord_df + eps)
+psord_df_log <- scale(psord_df_log)
+
+fit2 <- cv.sparseSVM(X = psord_df_log, y = clinical.df$PD)
+```
+
+```{r}
+w_ord <- predict(fit2,type = "coefficients")
+res_ord <- as.factor(as.vector(predict(fit2, psord_df_log)))
+confusionMatrix(clinical.df$PD, res_ord)
+```
+
+## Family level only
+
+```{r}
+psfam <- tax_glom(psra1,taxrank = "Family")
+psfam_df <- as.data.frame(psfam@otu_table)
+colnames(psfam_df) <- psfam@tax_table[,2]
+psfam_df_log <- log(psfam_df + eps)
+psfam_df_log <- scale(psfam_df_log)
+
+fit3 <- cv.sparseSVM(X = psfam_df_log, y = clinical.df$PD)
+```
+
+```{r}
+w_fam <- predict(fit3,type = "coefficients")
+res_fam <- as.factor(as.vector(predict(fit3, psfam_df_log)))
+confusionMatrix(clinical.df$PD, res_fam)
+```
+
+## Genus level only
+
+```{r}
+psgen <- tax_glom(psra1,taxrank = "Genus")
+psgen_df <- as.data.frame(psgen@otu_table)
+colnames(psgen_df) <- psgen@tax_table[,2]
+psgen_df_log <- log(psgen_df + eps)
+psgen_df_log <- scale(psgen_df_log)
+
+fit4 <- cv.sparseSVM(X = psgen_df_log, y = clinical.df$PD)
+```
+
+```{r}
+w_gen <- predict(fit4,type = "coefficients")
+res_gen <- as.factor(as.vector(predict(fit4, psgen_df_log)))
+confusionMatrix(clinical.df$PD, res_gen)
+```
+
+## OTU level only
+
+```{r}
+psotu_df <- as.data.frame(psra1@otu_table)
+colnames(psotu_df) <- paste("OTU",1:ncol(psotu_df),sep = ":")
+psotu_df_log <- log(psotu_df + eps)
+psotu_df_log <- scale(psotu_df_log)
+
+fit5 <- cv.sparseSVM(X = psotu_df_log, y = clinical.df$PD)
+```
+
+```{r}
+w_otu <- predict(fit5,type = "coefficients")
+res_otu <- as.factor(as.vector(predict(fit5, psotu_df_log)))
+confusionMatrix(clinical.df$PD, res_otu)
+```
+
+# Concordance of different levels
+```{r}
+taxainfo <- as.data.frame(psra1@tax_table)
+taxainfo <- taxainfo[,c("Phylum","Order","Family","Genus")]
+taxainfo$OTU <- paste("OTU",1:ncol(psotu_df),sep = ":")
+```
+
+```{r}
+Concord <- matrix(0, nrow = nrow(taxainfo), ncol = ncol(taxainfo))
+```
+
+```{r}
+w_otu1 <- w_otu[-1]
+w_fam1 <- w_fam[-1]
+w_gen1 <- w_gen[-1]
+w_ord1 <- w_ord[-1]
+w_phy1 <- w_phy[-1]
+Concord[,5] <- w_otu1
+Concord[,4] <- w_gen1[taxainfo$Genus]
+Concord[,3] <- w_fam1[taxainfo$Family]
+Concord[,2] <- w_ord1[taxainfo$Order]
+Concord[,1] <- w_phy1[taxainfo$Phylum]
+```
+
+```{r}
+Concord1 <- Concord
+Concord1[is.na(Concord1)] <- 1
+
+temp1 <- c(length(unique(taxainfo[(sign(Concord1[,4]) != sign(Concord1[,5])),5])),
+           length(unique(taxainfo[(sign(Concord1[,3]) != sign(Concord1[,4])),4])),
+           length(unique(taxainfo[(sign(Concord1[,2]) != sign(Concord1[,3])),3])),
+           length(unique(taxainfo[(sign(Concord1[,1]) != sign(Concord1[,2])),2])))
+
+temp2 <- c(length(unique(taxainfo[(sign(Concord1[,4]) != sign(Concord1[,5])),4])),
+           length(unique(taxainfo[(sign(Concord1[,3]) != sign(Concord1[,4])),3])),
+           length(unique(taxainfo[(sign(Concord1[,2]) != sign(Concord1[,3])),2])),
+           length(unique(taxainfo[(sign(Concord1[,1]) != sign(Concord1[,2])),1])))
+
+temp11 <- c(length(unique(taxainfo[,5])),length(unique(taxainfo[,4])),length(unique(taxainfo[,3])),length(unique(taxainfo[,2])),length(unique(taxainfo[,1])))
+```
+
+```{r}
+D <- data.frame(bottom_up = (temp11[1:4] - temp1)/temp11[1:4], top_down = (temp11[2:5] - temp2)/temp11[2:5])
+rownames(D) <- c("OTU:Gen", "Gen:Fam", "Fam:Ord", "Ord:Phy")
+D$taxa <- factor(rownames(D),levels = c("OTU:Gen", "Gen:Fam", "Fam:Ord", "Ord:Phy"))
+D_melt <- melt(D)
+taxa0 <- as.numeric(D_melt$taxa)
+```
+
+```{r}
+p <- ggplot(D_melt) + geom_point(aes(x = taxa0, y = value, color = variable)) + geom_path(aes(x = taxa0, y = value, color = variable)) + scale_x_continuous(labels = c("OTU:Gen", "Gen:Fam", "Fam:Ord", "Ord:Phy")) + theme_bw()
+ggplotly(p)
+```
+
+# PD Phynotype
+
+
+
+
+# Bayesian Heirachical model
+
+```{r}
+library(DMLMbvs)
+```
+
+```{r}
+exclude_sample <- c("18/103")
+ps31 <- subset_samples(ps3,(!(id %in% exclude_sample))&!(is.na(Age))&(PD == "PD"))
+D_micro <- as.matrix(vegdist(ps31@otu_table))
+```
+
+```{r}
+Diet_1 <- as.matrix(ps31@sam_data[,(ncol(ps31@sam_data)-24):ncol(ps31@sam_data)])
+Med_1 <- as.data.frame(as.matrix(ps31@sam_data[,c("L.Dopa.ID","Duodopa.ID","COMT.ID","Anticholinergic.ID","MAOB.ID","Dopamine.Agonist.ID","Apomorphine.ID","DBS.ID")]))
+for(i in 1:ncol(Med_1)){
+  Med_1[,i] <- as.numeric(Med_1[,i]) - 1
+}
+Med_1 <- as.matrix(Med_1)
+Bristol_1 <- as.data.frame(as.matrix(ps31@sam_data[,c("Bristol.Score","Constipation.ID...170")]))
+Bristol_1$Bristol.Score = as.numeric(as.character(Bristol_1$Bristol.Score))
+Bristol_1$Constipation.ID...170 = as.numeric(Bristol_1$Constipation.ID...170) - 1
+Bristol_1 <- as.matrix(Bristol_1)
+
+gen1 <- tax_glom(ps31,"Genus")
+gen1.df <- as.data.frame(as.matrix(gen1@otu_table))
+colnames(gen1.df) <- as.vector(gen1@tax_table[,6])
+gen1.df <- as.matrix(gen1.df)
+```
+
+
+```{r}
+clinical.df <- ps31@sam_data[,-c(1,2,6)]
+clinical.df <- ps31@sam_data
+clinical.df <- as.data.frame(as.matrix(clinical.df))
+id <- ps31@sam_data$id
+PD <- ps31@sam_data$PD
+PD = ifelse(PD == "PD", 1, 0)
+t <- ps31@sam_data$t
+Treatment <- ps31@sam_data$Treatment
+vartype <- c()
+
+for (i in 1:ncol(clinical.df)){
+  Y = as.character(clinical.df[,i])
+  test = as.numeric(Y)
+  if (sum(is.na(clinical.df[,i])) > 0.2*ncol(clinical.df)){
+    if (sum(is.na(clinical.df[PD == 1,i])) <= 0.2*sum(PD == 1)){
+      Y1 = Y[PD == 1]
+      test1 = as.numeric(Y1)
+      if(sum(is.na(test1)) < 10){
+        vartype[i] = "PD continuous"
+    
+      }else{
+        vartype[i] = "PD discrete"
+      }
+    }else{
+      vartype[i] = "missing"
+    }
+  }else if(sum(is.na(test)) < 10){
+    vartype[i] = "continuous"
+    
+  }else{
+    vartype[i] = "discrete"
+  }
+}
+names(vartype) = colnames(clinical.df)
+```
+
+```{r}
+X <- cbind(Diet_1, Med_1, Bristol_1)
+X <- scale(X)
+Y <- dummyCodeFactorDf(as.data.frame(clinical.df$PD.Phenotype.ID))
+Z <- gen1.df
+```
+
+
+```{r echo=F,message=F,warning=F}
+alpha = rnorm(ncol(gen1.df))
+res <- list()
+for (i in 1:ncol(Y)){
+  res[[i]] <- dm_lm_bvs_R(x = X, y = Y[,i], z = Z, alpha = alpha)
+}
+
+```
+
+```{r}
+library(visNetwork)
+nodes_Diet <- data.frame(id = 1:ncol(Diet_1),
+                     level = 1,
+                     label = colnames(Diet_1),
+                     title = colnames(Diet_1),
+                     color = "lightblue")
+
+nodes_Med <- data.frame(id = (ncol(Diet_1) + 1):(ncol(Diet_1) + ncol(Med_1)),
+                     level = 1,
+                     label = colnames(Med_1),
+                     title = colnames(Med_1),
+                     color = "steelblue")
+nodes_Bristol <- data.frame(id = (ncol(Diet_1) + ncol(Med_1) + 1):(ncol(Diet_1) + ncol(Med_1) + ncol(Bristol_1)),
+                     level = 1,
+                     label = colnames(Bristol_1),
+                     title = colnames(Bristol_1),
+                     color = "blue")
+nodes_genus <- data.frame(id = (ncol(X) + 1):(ncol(X) + ncol(Z)),
+                     level = 2,
+                     label = colnames(Z),
+                     title = colnames(Z),
+                     color = "khaki")
+nodes_phenotype <- data.frame(id = (ncol(X) + ncol(Z) + 1):(ncol(X) + ncol(Z) + 4),
+                              level = 3,
+                              label = levels(clinical.df$PD.Phenotype.ID),
+                              title = levels(clinical.df$PD.Phenotype.ID),
+                              color = "red")
+nodes <- rbind(nodes_Diet,nodes_Med,nodes_Bristol,nodes_genus,nodes_phenotype)
+```
+
+```{r}
+edges <- data.frame(from = 0,to = 0,title = "",color = "red")
+for (i in 1:4){
+  select <- selected(res[[i]])
+  xi <- select$selected_xi
+  zeta <- select$selected_zeta
+  edges1 <- data.frame(from = zeta[,2],to = zeta[,1] + ncol(X),title = "",color = "tan")
+  if(length(xi)){
+    edges2 <- data.frame(from = xi + ncol(X), to = ncol(X) + ncol(Z) + i,title = "",color = "tan")
+    edges = rbind(edges, edges1,edges2)
+  }else{
+    edges = rbind(edges, edges1)
+  }
+}
+edges <- edges[-1,]
+```
+
+```{r}
+used <- unique(c(edges$from,edges$to))
+nodes <- nodes[nodes$id %in% used,]
+```
+
+
+```{r}
+visNetwork(nodes,edges) %>% visHierarchicalLayout()
+```
+
+
+```{r}
+#zeta <- list()
+#xi <- list()
+#for (i in 1:ncol(clinical.df)){
+#  print(i)
+#  if(vartype[i] == "discrete"){
+#    if(length(levels(clinical.df[,i])) == 2){
+#      clinical.df[,i] = as.numeric((clinical.df[,i]))
+#      res = dm_lm_bvs_R(x = scale(Diet_1[,-c(1,2)]), y = scale(clinical.df[,i]), z = gen1.df, alpha = alpha, iterations = 1000)
+#      select = selected(res)
+#      zeta[[i]] <- select$selected_zeta
+#      xi[[i]] <- select$selected_xi
+#      names(zeta)[i] = names(vartype)[i]
+#      names(xi)[i] = names(vartype)[i]
+#    }
+#  }else if(vartype[i] == "continuous"){
+#    clinical.df[,i] = as.numeric(as.character(clinical.df[,i]))
+#    res = dm_lm_bvs_R(x = scale(Diet_1[,-c(1,2)]), y = scale(clinical.df[,i]), z = gen1.df, alpha = alpha, #iterations = 1000)
+#    select = selected(res)
+#    zeta[[i]] <- select$selected_zeta
+#    xi[[i]] <- select$selected_xi
+#    names(zeta)[i] = names(vartype)[i]
+#    names(xi)[i] = names(vartype)[i]
+#  }
+#}
+```
+
+
+```{r}
+#select <- selected( res, burnin = 500,plotting = T )
+```
+
+```{r}
+#select$selected_zeta
+#select$selected_xi
+```
+
+```{r}
+#colnames(gen1.df)[select$selected_zeta[,1]]
+#colnames(Diet_1)[2+select$selected_zeta[,2]]
+#colnames(gen1.df)[select$selected_xi]
+```
+
+```{r}
+df_HC <- df[df$PD == "HC",]
+s <- c(mean(df_HC$Axis.1 ),mean( df_HC$Axis.2))
+```
+
+```{r}
+df_PD <- df[df$PD == "PD",]
+d <- data.frame(x = df_PD$Axis.1, y = df_PD$Axis.2)
+d1 <- d - s
+d2 <- d1$x^2 + d1$y^2
+```
+
+```{r}
+d21 <- which(d2 > 0.05)
+```
+
+```{r}
+test <- c(which(df$PD == "HC"), d21)
+```
+
+```{r}
+psuedo_lab <- c(rep(0, nrow(df_HC)), rep(1, length(d21)))
+```
+
+```{r}
+psuedo_lab <- as.factor(psuedo_lab)
+```
+
+```{r}
+Diet <- as.matrix(psra@sam_data[,(ncol(psra@sam_data)-22):ncol(psra@sam_data)])
+x <- scale(Diet[test,])
+temp0 <- glm( psuedo_lab~x,family = "binomial")
+```
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+X <- phyloseq::tax_glom(psra, taxrank = "Family")
+y <- psra@sam_data$PD
+```
+
+```{r}
+x <- as.matrix(X@otu_table)
+y <- as.numeric(as.factor(y)) - 1
+p1 <- adonis2(x~y, permutations = 9999)
+p1
+```
+
+```{r}
+
+ps01_sub2 <- subset_samples(ps0, latent == 2)
+
+seq <- as.list(colnames(ps01_sub2@otu_table))
+
+seq_name <- paste(ps01_sub2@tax_table[,5], 1:length(seq), sep = "")
+
+write.fasta(seq, seq_name, "sample77.fasta")
+```
+
+```{r}
+asv_tab <- as.data.frame(ps01_sub2@otu_table)
+colnames(asv_tab) <- seq_name
+
+asv_tab <- t(as.matrix(asv_tab))
+
+write.table(asv_tab, "sample77.txt", sep = "\t", quote = F)
+```
+
+```{r}
+library(readr)
+pathway_abd <- read_tsv("path_abun_unstrat_descrip.tsv")
+```
+
+```{r}
+path_info <- pathway_abd[,1:2]
+path_tab <- as.matrix(round(pathway_abd[,3:79]))
+rownames(path_tab) <- unlist(path_info[,1])
+```
+
+```{r}
+library(ALDEx2)
+```
+
+```{r}
+path_aldex <- aldex(path_tab, ps0@sam_data$PD[latent == 2], mc.samples=1024, test="t",
+                    effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+df_ps <- path_aldex[,c("diff.btw","wi.ep","we.ep", "we.eBH", "wi.eBH")]
+```
+
+```{r}
+df_ps$descrip <- unlist(path_info[,2])
+```
+
+```{r}
+color = rep("1",nrow(df_ps))
+color[(abs(df_ps$diff.btw)>0.5)&(df_ps$wi.ep<0.05)] = "2"
+df_anno = df_ps[(abs(df_ps$diff.btw)>0.5)&(df_ps$wi.ep<0.05),]
+ggplot(df_ps) + geom_point(aes(x = diff.btw, y = -log(wi.ep, base = 2), color = color)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.01,y=-log(wi.ep, 2)-0.01),label = rownames(df_anno), size = 3) + theme(legend.position="none")
+```
+
+```{r}
+write.csv(df_ps, "pathway_77.csv")
+```
+
