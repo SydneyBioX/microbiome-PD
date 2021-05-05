@@ -1,0 +1,3243 @@
+---
+title: "Microbiome PD stage3"
+author: "xxn"
+date: "2020/9/14"
+output: 
+  html_document:
+    chunk_output_type: console
+    code_folding: hide
+    editor_options: null
+    fig_height: 8
+    fig_width: 8
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    indent: True
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+```
+
+
+In this analysis, the alignment of OTUs is not that good. We change the reference from silva 132 to 138. Maybe some names of taxa will be different. 
+
+This analysis will only focus on the newest 314 microbiome samples. Next time, when we put the whole samples together, We'll re-do the alignment to make the reference to be consistent.
+
+```{r}
+library(tidyverse)
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+library(plotly)
+library(kableExtra)
+library(grid)
+library(gridExtra)
+library(knitr)
+library(janitor)
+library(psycho)
+library(vegan)
+library(ez)
+library(lme4)
+library(lmerTest)
+library(reshape2)
+library(hrbrthemes)
+library(colorspace)
+library(igraph)
+library(qtlcharts)
+library(RColorBrewer)
+library(randomForest)
+library(measurements)
+library(iml)
+library(lmPerm)
+library(ALDEx2)
+library(caret)
+library(e1071)
+library(randomForest)
+library(denoiseR)
+library(ROCit)
+library(vip)
+library(pROC)
+library(ClassifyR)
+```
+
+```{r}
+halfpage <- conv_unit(85, "mm", "inch")
+fullpage <- conv_unit(170, "mm", "inch")
+maxhi <- conv_unit(225, "mm", "inch")
+```
+
+
+```{r}
+load("D:\\Rcode\\microbiome\\otu_0.RData")
+otu_tab0 = res$OTU
+tax_tab0 = res$taxTab
+#fitGTR = res$fitGTR
+sampleNames0 <- c()
+for(i in 1:nrow(otu_tab0)){
+  name_temp = rownames(otu_tab0)[i]
+  sampleNames0[i] = strsplit(name_temp, "_")[[1]][1]
+}
+rownames(otu_tab0) = sampleNames0
+```
+
+```{r}
+sample_sp = strsplit(sampleNames0,"-t-")
+sample_info0 = data.frame(id = 0,t = 0)
+for (i in 1:length(sample_sp)){
+  if(length(sample_sp[[i]]) == 2){
+    id = sample_sp[[i]][1]
+    id = sub(pattern = "-",replacement = "/",x = id)
+    sample_time = sample_sp[[i]][2]
+    if (sample_time == "minus2"){
+      sample_time = -2
+    }else if(is.na(as.numeric(sample_time))){
+      sample_time = 0
+    }else{
+      sample_time = as.numeric(sample_time)
+    }
+    
+  }else{
+    id = sample_sp[[i]][1]
+    sample_time = NA
+  }
+  sample_info0 = rbind(sample_info0,c(id,sample_time))
+}
+sample_info0 = sample_info0[-1,]
+rownames(sample_info0) = sampleNames0
+rownames(otu_tab0) = sampleNames0
+```
+
+
+```{r}
+set.seed(1000)
+load("res.RData")
+
+otu_tab1 <- res0$otu_tab
+tax_tab1 <- res0$taxTab
+sampleNames1 <- c()
+for(i in 1:nrow(otu_tab1)){
+  name_temp = rownames(otu_tab1)[i]
+  sampleNames1[i] = strsplit(name_temp, "_")[[1]][1]
+}
+rownames(otu_tab1) = sampleNames1
+```
+
+```{r}
+sample_sp = strsplit(sampleNames1,"-t-")
+sample_info1 = data.frame(id = 0,t = 0)
+for (i in 1:length(sample_sp)){
+  if(length(sample_sp[[i]]) == 2){
+    id = sample_sp[[i]][1]
+    id = sub(pattern = "-",replacement = "/",x = id)
+    sample_time = sample_sp[[i]][2]
+    if (sample_time == "minus2"){
+      sample_time = -2
+    }else if(is.na(as.numeric(sample_time))){
+      sample_time = 0
+    }else{
+      sample_time = as.numeric(sample_time)
+    }
+    
+  }else{
+    id = sample_sp[[i]][1]
+    sample_time = NA
+  }
+  sample_info1 = rbind(sample_info1,c(id,sample_time))
+}
+sample_info1 = sample_info1[-1,]
+rownames(sample_info1) = sampleNames1
+rownames(otu_tab1) = sampleNames1
+```
+
+```{r}
+sample_info_micro <- rbind(sample_info0, sample_info1)
+sample_info_micro$type <- "normal"
+```
+
+```{r}
+sampleNames_micro <- rownames(sample_info_micro)
+
+flag1 <- substr(sampleNames_micro,1,4)
+flag2 <- substr(sampleNames_micro,12,14)
+
+sample_info_micro$type[flag1 == "Zymo"] = "Zymo"
+sample_info_micro$t[flag1 == "Zymo"] = 0
+sample_info_micro$type[flag2 == "rpt"] = "rpt"
+```
+
+
+```{r}
+Clinical1 <- readxl::read_xlsx("D:\\Rcode\\microbiome\\old\\stage3\\Project Database - All Time Intervals.xlsx",sheet = 1)
+```
+
+
+```{r}
+#idx = match(sample_info1$id,Clinical1$`Neurogenetics ID`)
+
+#sample_info1 = cbind(sample_info1,Clinical1[idx,var_name])
+
+#colnames(sample_info)[1:2] = c("id","t","Sex","Age","PD","Cohort","PD_Age")
+#colnames(sample_info1)[c(1,2,5,4,3,6)] = c("id","t","Sex","Age","PD","Treatment")
+
+var_name = c("PD ID", "Age","Sex ID","Cohort Identifier ID","Height (cm)","Weight (kg)","BMI","Ethnicity ID", "Marital Status ID","Education ID","Employment ID","Income ID","Health Insurance ID","Support Services ID","Allied Health in Last Yr ID","Physio ID", "PD Duration","PD Phenotype ID","Late Onset >60 yrs ID","Genetic ID", "Rehabilitation ID", "Dyskinesia ID","On-Off Fluctuation ID","Wearing off ID","Anosmia ID", "Neuroleptic Use ID","PD FHx ID","Pesticide ID", "Current Smoker ID","Prior Smoker ID","Never Smoked ID" ,"No. Cups (day)","EtOH Consumption ID","EtOH < 1 weekly ID","EtOH 1-6 days week ID","EtOH Daily ID", "Diabetes ID","DM Duration (years)","HbA1c...111", "Medication PD Rx ID","L-Dopa ID","Duodopa ID","DBS ID","Apomorphine ID","Dopamine Agonist ID","MAOB ID","Anticholinergic ID","COMT ID","Amantidine ID", "Physical Functioning","Role Functioning_Physical","Energy_Fatigue","Emotional Well-being","Social Functioning","General Health","Health Change","Physical Component Summary"  ,"Pain","Chronic Pain ID","Pain Score","Walk 1 km ID","Climb 1 flight stairs ID","IPAQ MET-min/week","IPAQ Sitting hr/day","IPAQ Category Score ID", "Beck's Depression Inventory","Depressed ID","MOCA Visuospacial","MOCA Naming","MOCA Attention","MOCA Language","MOCA Abstraction","MOCA Delayed Recall","MOCA Orientation","MOCA total score","Mild Cognitive Impairment ID","PD Dementia ID", "Constipation ID...74","Constipation ID...170","Cleveland Constipation Score","Strinaing ID","Hard Stools ID","Incomplete Evacucation ID","Manual Manoeuvres ID","Spontaneous bowel mvts / week ID","Rome IV Total Score","LDQ Score","Most troublesome symptom ID","Bristol Score", "NMSS Cardiovascular","NMSS Sleep and fatigue","NMSS Mood and cognition","NMSS Perceptual problems","NMSS Attention and Memory","NMSS Gastrointestinal","NMSS Urinary","NMSS Sexual","NMSS Miscellaneous","NMSS Total Score", "PDQ Mobility","PDQ ADL","PDQ Emotions","PDQ Stigma","PDQ Social","PDQ Cognitions","PDQ Communication","PDQ Body Pain","PDQ Summary Index", "UPDRS Speech","UPDRS Facial Expression","UPDRS Rigidity","UPDRS Finger Tapping","UPDRS Hand Movements","UPDRS Pronation Supination","UPDRS Toe Tapping","UPDRS Leg Agility","UPDRS Rising from Chair","UPDRS Gait","UPDRS Freezing","UPDRS Postural Stability","UPDRS Posture","UPDRS Body Bradykinesia","UPDRS Postural Hand Tremor","UPDRS Kinetic Hand Tremor","UPDRS Rest Tremor","UPDRS Consistancy of Rest Tremor","UPDRS Total Score","Hoehn and Yahr Stage","ESR","CRP","Total Cholesterol", "LDL", "HDL", "Glucose", "Trigs", "HbA1c...262", "Albumin","ICD ID","RBD ID","OT ID","Speech Pathologist ID","Dietician ID","Pack YHx","Type of Tabaco ID","Last Abx use (months)","Telemedicine Interest ID","Distance to clinic (km)","Total LED (mg)","Head Trauma ID","Vegetarian Diet ID","Tot_Energy_with_Dietary_Fibre_kJ_per_day","Tot_Energy_without_Dietary_Fibre_kJ_per_day","Tot_Moisture","Tot_Protein_g_per_day","Tot_Fat_g_per_day","Tot_Fibre_g_per_day","Tot_Alcohol_g_per_day","Tot_of_Total_Sugars_g_per_day","Tot_Free_Sugars_g_per_day","Tot_Added_Sugars_g_per_day","Tot_Avail_Carbs_g_per_day","Tot_Calcium_mg_per_day","Tot_Iron_mg_per_day","Tot_Magn_mg_per_day","Tot_Potas_mg_per_day","Tot_Sodium_mg_per_day","Tot_Zinc_mg_per_day","Tot_Retinol_ug_per_day","Tot_Beta_car_ug_per_day","Tot_Vit_A_RE_ug_per_day","Tot_Thiamin_mg_per_day","Tot_Ribo_mg_per_day","Tot_B12_ug_per_day","Tot_Dietary_Folate_ug_per_day","Tot_Vit_C_mg_per_day")
+
+Clinical1 <- Clinical1[!is.na(Clinical1$`Neurogenetics ID`),]
+```
+
+
+
+
+```{r}
+Clinical1$t = Clinical1$Intervals
+Clinical1$t[Clinical1$t == 1] = -2
+Clinical1$t[Clinical1$t == 2] = 0
+Clinical1$t[Clinical1$t == 3] = 2
+Clinical1$t[Clinical1$t == 6] = 12
+Clinical1$t[Clinical1$t == 5] = 6
+idx <- c()
+for(i in 1:nrow(sample_info_micro)){
+  if(sample_info_micro$type[i] == "Zymo"){
+    idx[i] <- NA
+  }else{
+    temp1 <- which(Clinical1$`Neurogenetics ID` == sample_info_micro[i,1])
+      if(length(temp1) == 0){
+        idx[i] <- NA
+      }else if(length(temp1) == 1){
+        idx[i] = temp1
+      }else{
+        temp2 <- which(Clinical1$t[temp1] == sample_info_micro[i,2])
+        if(length(temp2)){
+          idx[i] = temp1[temp2]
+      }
+      else{
+        idx[i] = temp1[1]
+      }
+  }
+  }
+  
+}
+sample_info = cbind(sample_info_micro, Clinical1[idx,var_name])
+colnames(sample_info)[4] = "PD"
+colnames(sample_info)[7] = "Treatment"
+```
+
+```{r}
+q <- min(ncol(otu_tab0), ncol(otu_tab1))
+otu_tab0 <- otu_tab0[,1:q]
+otu_tab1 <- otu_tab1[,1:q]
+tax_tab <- tax_tab0
+otu_tab <- rbind(otu_tab0,otu_tab1)
+sampleNames <- rownames(otu_tab)
+```
+
+```{r}
+meta_data <-as.data.frame(sample_info)
+rownames(meta_data) = sampleNames
+
+ps <- phyloseq(otu_table(otu_tab, taxa_are_rows = F), sample_data(meta_data),tax_table(tax_tab))
+
+```
+
+```{r}
+temp_dim <- dim(ps@otu_table)
+```
+
+
+```{r}
+D = data.frame(rank = rank_names(ps), class_num = 0, sample_prop = 0)
+for(i in 1:length(rank_names(ps))){
+  D[i,2] = length(table(ps@tax_table[,i]))
+  D[i,3] = sum(!is.na(ps@tax_table[,i]))/nrow(ps@tax_table)
+}
+
+D %>% kable() %>% kable_styling()
+```
+
+```{r}
+ps <- subset_taxa(ps, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+
+prevdf = apply(X = otu_table(ps),
+               MARGIN = ifelse(taxa_are_rows(ps), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(ps),
+                    tax_table(ps))
+
+#colnames(prevdf) = c("Prevalence","Total Abundance")
+
+prevdf_phylum = plyr::ddply(prevdf, "Phylum", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+colnames(prevdf_phylum) = c("Phylum","Mean of Prevalence", "Sum of Prevalence")
+
+prevdf_phylum %>% kable() %>% kable_styling()
+```
+
+```{r}
+filterPhyla = c("Elusimicrobiota","Candidatus_Saccharibacteria","Cyanobacteria/Chloroplast","Tenericutes")
+# Filter entries with unidentified Phylum.
+ps1 = subset_taxa(ps, !Phylum %in% filterPhyla)
+
+prevdf1 = subset(prevdf, Phylum %in% get_taxa_unique(ps1, "Phylum"))
+ggplot(prevdf1, aes(TotalAbundance, Prevalence / nsamples(ps),color=Phylum)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.1, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~Phylum) + theme(legend.position="none") + theme_bw()
+```
+
+```{r}
+prevalenceThreshold = floor(0.1 * nsamples(ps))
+keepTaxa = rownames(prevdf1)[(prevdf1$Prevalence >= prevalenceThreshold)]
+ps2 = prune_taxa(keepTaxa, ps)
+temp_dim = dim(ps2@otu_table)
+```
+
+Update: 573 OTUs left
+
+```{r}
+#ps3 = ps2
+
+#ps3@sam_data[sample_id_pair$type == "Zymo","Neurogenetics ID"] = "Zymo"
+#ps3@sam_data[sample_id_pair$type == "Zymo","Intervals"] = 2
+```
+
+```{r}
+ps3 = subset_samples(ps2,!is.na(PD))
+ps3 = subset_samples(ps3, type == "normal")
+ps3 = subset_samples(ps3, !(sample_names(ps3) == "18-203-t-2"))
+keepTaxa1 = keepTaxa[!is.na(ps2@tax_table[,6])]
+ps3 = prune_taxa(keepTaxa1,ps3)
+ps3@sam_data$t[ps3@sam_data$t == "13"] = "12"
+ps3@sam_data$t <- factor(ps3@sam_data$t, levels = c(-2,0,2,4,6,12))
+ps3@sam_data$Treatment[ps3@sam_data$PD == "no"] = "Control"
+```
+
+
+```{r}
+pslog <- transform_sample_counts(ps3, function(x) log(1 + x))
+psra <- transform_sample_counts(ps3, function(x){x / sum(x)})
+```
+
+
+```{r}
+#pslog1 <- transform_sample_counts(ps4, function(x) log(1 + x))
+#psra1 <- transform_sample_counts(ps4, function(x){x / sum(x)})
+```
+
+# Sample plot
+
+```{r}
+bccolsF <- c(brewer.pal(name = "BrBG", n = 10)[c(1, 3, 4, 5, 8)], brewer.pal(name = "PRGn", n =
+10)[c(1, 3, 5, 8, 10)], "gray75")
+```
+
+```{r}
+RelAbundChart <- function(psra, level = "Phylum", maxAbd = 10, minprop = 0.05, mode = 1){
+  
+  psra_glom <- tax_glom(psra, taxrank = level)
+  psra_melt <- psmelt(psra_glom)
+  level1 <- rlang::sym(level)
+  psra_melt1 <- psra_melt %>% group_by(!!level1, Treatment, t) %>% summarise(mean = mean(Abundance))
+  psra_melt0 <- psra_melt %>% group_by(!!level1) %>% summarise(mean = mean(Abundance))
+  
+  if(mode == 2){
+    level_sel <- as.vector(as.matrix(psra_melt0[psra_melt0[,"mean"]>=minprop,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(Treatment, t) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      other <- psra_check %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      psra_melt1 <- rbind(psra_melt2,other)
+    }
+    
+    
+  }else if(mode == 1){
+    psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+    level_sel <- as.vector(as.matrix(psra_melt0[1:min(maxAbd,nrow(psra_melt0)),1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(Treatment, t) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      other <- psra_check %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      psra_melt1 <- rbind(psra_melt2,other)
+    }
+
+  }else{
+    psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+    level_ind <- intersect(1:min(maxAbd,nrow(psra_melt0)),which(psra_melt0[,"mean"]>=minprop))
+    level_sel <- as.vector(as.matrix(psra_melt0[level_ind,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(Treatment, t) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      other <- psra_check %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      psra_melt1 <- rbind(psra_melt2,other)
+  }
+  }
+  psra_melt1[,level] = factor(as.character(as.vector((as.matrix(psra_melt1[,level])))),levels = c(unique(as.character(as.vector((as.matrix(psra_melt2[,level]))))),"Other taxa"))
+  return(psra_melt1) 
+}
+```
+
+```{r}
+#ps5 <- subset_samples(ps4, rowSums(ps4@otu_table)>0)
+```
+
+```{r}
+#pslog <- transform_sample_counts(ps5, function(x) log(1 + x))
+#psra <- transform_sample_counts(ps5, function(x){x / sum(x)})
+```
+
+
+```{r}
+psra_melt_Gen <- RelAbundChart(psra, "Genus", maxAbd = 10, mode = 1)
+psra_melt_Fam <- RelAbundChart(psra, "Family", maxAbd = 10, mode = 1)
+psra_melt_Ord <- RelAbundChart(psra, "Order", maxAbd = 10, mode = 1)
+psra_melt_Phy <- RelAbundChart(psra, "Phylum", maxAbd = 10, mode = 1)
+#psra_melt_Ord <- RelAbundChart(psra, "Order", maxAbd = 10, mode = 1)
+```
+
+```{r}
+bccolsF <- c(brewer.pal(name = "BrBG", n = 10)[c(1, 3, 4, 5, 8)], brewer.pal(name = "PRGn", n =
+10)[c(1, 3, 5, 8, 10)], "gray75")
+
+p_Phy <- ggplot(psra_melt_Phy, aes(x = t, y = mean, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  xlab(NULL) +
+  ylab("Mean relative abundance (%)") +
+  scale_fill_manual(values = bccolsF, name = "Phylum") +
+  guides(fill = guide_legend(ncol = 1)) +
+  ggtitle("A.") +
+  theme_bw(base_size = 11) +
+  facet_grid(~ Treatment) +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+
+p_Fam <- ggplot(psra_melt_Fam, aes(x = t, y = mean, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack") +
+  xlab(NULL) +
+  ylab("Mean relative abundance (%)") +
+  scale_fill_manual(values = bccolsF, name = "Family") +
+  guides(fill = guide_legend(ncol = 1)) +
+  ggtitle("B.") +
+  theme_bw(base_size = 11) +
+  facet_grid(~ Treatment) +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+p_Ord <- ggplot(psra_melt_Ord, aes(x = t, y = mean, fill = Order)) +
+  geom_bar(stat = "identity", position = "stack") +
+  xlab(NULL) +
+  ylab("Mean relative abundance (%)") +
+  scale_fill_manual(values = bccolsF, name = "Order") +
+  guides(fill = guide_legend(ncol = 1)) +
+  ggtitle("C.") +
+  theme_bw(base_size = 11) +
+  facet_grid(~ Treatment) +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+p_Gen <- ggplot(psra_melt_Gen, aes(x = t, y = mean, fill = Genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  xlab(NULL) +
+  ylab("Mean relative abundance (%)") +
+  scale_fill_manual(values = bccolsF, name = "Genera") +
+  guides(fill = guide_legend(ncol = 1)) +
+  theme_bw(base_size = 11) +
+  facet_grid(~ Treatment) +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm"))
+```
+
+```{r}
+fig11 <- arrangeGrob(p_Phy,p_Fam,ncol = 1)
+fig21 <- arrangeGrob(p_Ord,p_Gen,ncol = 1)
+pdf("./fig/figure1.pdf")
+grid.arrange(fig11)
+grid.arrange(fig21)
+#ggsave(fig1, filename = "figure1.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+#grid.arrange(fig1)
+dev.off()
+
+fig1 <- arrangeGrob(p_Phy,p_Fam,p_Ord,p_Gen,ncol = 1)
+tiff(filename = "./fig/figure1.tiff", units="in",width = 12,height = 16, compression="lzw", res=150)
+grid.arrange(fig1)
+#grid.arrange(fig21)
+dev.off()
+```
+
+# Sample plot
+
+```{r}
+RelAbundChart1 <- function(psra, level = "Phylum", maxAbd = 10, minprop = 0.05, mode = 1){
+  
+  psra_glom <- tax_glom(psra, taxrank = level)
+  psra_melt <- psmelt(psra_glom)
+  level1 <- rlang::sym(level)
+  psra_melt1 <- psra_melt %>% group_by(!!level1, PD, id, t, Sample, Treatment)  %>% summarise(mean = mean(Abundance))
+  psra_melt0 <- psra_melt %>% group_by(!!level1) %>% summarise(mean = mean(Abundance))
+  
+  if(mode == 2){
+    level_sel <- as.vector(as.matrix(psra_melt0[psra_melt0[,"mean"]>=minprop,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(PD) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      psra_check1 <- psra_melt2 %>% group_by(Sample, PD) %>% summarise(mean = sum(mean))
+      other <- psra_check1 %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      other <- data.frame(other)
+      psra_melt2 <- data.frame(psra_melt2)
+      psra_melt1 <- rbind(psra_melt2,other)
+    }
+    
+    
+  }else if(mode == 1){
+      psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+      level_sel <- as.vector(as.matrix(psra_melt0[1:min(maxAbd,nrow(psra_melt0)),1]))
+      psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+      psra_check <- psra_melt2 %>% group_by(PD, id, t, Treatment) %>% summarise(mean = sum(mean))
+      if(nrow(psra_melt2) <= nrow(psra_melt1)){
+        psra_check1 <- psra_melt2 %>% group_by(Sample, PD, id, t, Treatment) %>% summarise(mean = sum(mean))
+        other <- psra_check1 %>% mutate(!!level1 := "Other taxa")
+        other[,"mean"] = 1 - other[,"mean"]
+        other <- data.frame(other)
+        psra_melt2 <- data.frame(psra_melt2)
+        psra_melt1 <- rbind(psra_melt2,other)
+    }
+
+  }
+  else{
+    psra_melt0 <- psra_melt0 %>% arrange(desc(mean))
+    level_ind <- intersect(1:min(maxAbd,nrow(psra_melt0)),which(psra_melt0[,"mean"]>=minprop))
+    level_sel <- as.vector(as.matrix(psra_melt0[level_ind,1]))
+    psra_melt2 <- psra_melt1[as.character(as.vector(as.matrix(psra_melt1[,1]))) %in% level_sel,]
+    psra_check <- psra_melt2 %>% group_by(PD) %>% summarise(mean = sum(mean))
+    if(nrow(psra_melt2) <= nrow(psra_melt1)){
+      psra_check1 <- psra_melt2 %>% group_by(Sample, PD) %>% summarise(mean = sum(mean))
+      other <- psra_check1 %>% mutate(!!level1 := "Other taxa") %>% select(!!level1, everything())
+      other[,"mean"] = 1 - other[,"mean"]
+      other <- data.frame(other)
+      psra_melt2 <- data.frame(psra_melt2)
+      psra_melt1 <- rbind(psra_melt2,other)
+  }
+  }
+  psra_melt1[,level] = factor(as.character(as.vector((as.matrix(psra_melt1[,level])))),levels = c(unique(as.character(as.vector((as.matrix(psra_melt2[,level]))))),"Other taxa"))
+  return(psra_melt1) 
+}
+```
+
+```{r}
+psra_melt_Gen <- RelAbundChart1(psra, "Genus", maxAbd = 10, mode = 1)
+psra_melt_Fam <- RelAbundChart1(psra, "Family", maxAbd = 10, mode = 1)
+psra_melt_Ord <- RelAbundChart1(psra, "Order", maxAbd = 10, mode = 1)
+psra_melt_Phy <- RelAbundChart1(psra, "Phylum", maxAbd = 10, mode = 1)
+#psra_melt_Ord <- RelAbundChart(psra, "Order", maxAbd = 10, mode = 1)
+```
+
+
+```{r}
+sample_plot <- function(data, title, sample_ord = NULL, level = "Family"){
+  level1 <- rlang::sym(level)
+  if(is.null(data_order)){
+    data_order <- data[data[,1] == data[1,1],]
+    data_order$PD <- as.factor(data_order$PD)
+    data_order <- data_order %>% group_by(PD) %>% dplyr::arrange(desc(mean),.by_group = T)
+    sample_ord <- data_order$Sample
+  }
+  
+  data$id <- factor(data$id,levels = sample_ord)
+  p <- ggplot(data) +
+        geom_bar(aes(x = id, y = mean, fill = !!level1), position = "stack", stat = "identity") +
+        xlab("Sample") +
+        ylab("Abundance") +
+        scale_fill_manual(values = bccolsF)  +
+        ggtitle(title) +
+        theme_bw(base_size = 11) +
+        theme(strip.background = element_rect(fill = "white"),
+        panel.grid = element_blank(),
+        legend.text.align = 0,
+        legend.key.height = unit(4, "mm"),
+        legend.key.width = unit(4, "mm"),
+        legend.text = element_text(size = 9),
+        legend.margin = ggplot2::margin(r = 7, unit = "mm"),axis.text.x = element_blank())
+    return(p)
+}
+```
+
+```{r}
+sep_t <- function(t0, Treatment, psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy, sample_ord){
+  
+  psra_melt_Gen0 <- psra_melt_Gen[(psra_melt_Gen$t == t0)&(psra_melt_Gen$Treatment %in% Treatment),]
+  psra_melt_Fam0 <- psra_melt_Fam[(psra_melt_Fam$t == t0)&(psra_melt_Fam$Treatment %in% Treatment),]
+  psra_melt_Ord0 <- psra_melt_Ord[(psra_melt_Ord$t == t0)&(psra_melt_Ord$Treatment %in% Treatment),]
+  psra_melt_Phy0 <- psra_melt_Phy[(psra_melt_Phy$t == t0)&(psra_melt_Phy$Treatment %in% Treatment),]
+  
+  p_Gen_Sample0 <- sample_plot(as.data.frame(psra_melt_Gen0),"Genus",level = "Genus", sample_ord =  sample_ord)
+  p_Fam_Sample0 <- sample_plot(as.data.frame(psra_melt_Fam0),"Family",level = "Family", sample_ord =  sample_ord)
+  p_Ord_Sample0 <- sample_plot(as.data.frame(psra_melt_Ord0),"Order",level = "Order", sample_ord =  sample_ord)
+  p_Phy_Sample0 <- sample_plot(as.data.frame(psra_melt_Phy0),"Phylum",level = "Phylum", sample_ord =  sample_ord)
+  
+  return(list(p_Gen_Sample = p_Gen_Sample0, p_Fam_Sample = p_Fam_Sample0, p_Ord_Sample = p_Ord_Sample0, p_Phy_Sample = p_Phy_Sample0))
+}
+```
+
+
+```{r}
+psra_melt_Fam0 <- psra_melt_Fam[psra_melt_Fam$Treatment %in% c("Control", "Longitudinal"),]
+data_order = psra_melt_Fam0[(psra_melt_Fam0[,1] == "Bacteroidaceae")&(psra_melt_Fam0$t == 0),]
+data_order$Treatment <- as.factor(data_order$Treatment)
+data_order <- data_order %>% group_by(Treatment) %>% dplyr::arrange(desc(mean),.by_group = T)
+sample_ord <- data_order$id
+
+sep_0 <- sep_t(0, c("Control", "Longitudinal"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord)
+sep_6 <- sep_t(6, c("Control", "Longitudinal"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord)
+sep_12 <- sep_t(12, c("Control", "Longitudinal"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord)
+```
+
+```{r}
+fig1_Sample <- arrangeGrob(sep_0[[1]], sep_0[[2]], sep_0[[3]], sep_0[[4]], sep_6[[1]], sep_6[[2]], sep_6[[3]], sep_6[[4]], sep_12[[1]], sep_12[[2]], sep_12[[3]], sep_12[[4]], nrow = 3, ncol = 4)
+grid.arrange(fig1_Sample)
+ggsave(fig1_Sample, filename = "./fig/figure1_Sample.pdf",width = 30, height = 10, units = "in")
+tiff(filename = "./fig/figure1_Sample.tiff" ,width=30, height=10, units="in", compression="lzw", res=150)
+grid.arrange(fig1_Sample)
+dev.off()
+```
+
+```{r}
+psra_melt_Fam1 <- psra_melt_Fam[psra_melt_Fam$Treatment %in% c("Duodopa", "DBS"),]
+data_order1 = psra_melt_Fam1[(psra_melt_Fam1[,1] == "Bacteroidaceae")&(psra_melt_Fam1$t == 2),]
+data_order1$Treatment <- as.factor(data_order1$Treatment)
+data_order1 <- data_order1 %>% group_by(Treatment) %>% dplyr::arrange(desc(mean),.by_group = T)
+sample_ord1 <- data_order1$id
+
+sep__2 <- sep_t(-2, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+sep_0 <- sep_t(0, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+sep_2 <- sep_t(2, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+sep_4 <- sep_t(4, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+sep_6 <- sep_t(6, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+sep_12 <- sep_t(12, c("Duodopa", "DBS"), psra_melt_Gen, psra_melt_Fam, psra_melt_Ord, psra_melt_Phy ,sample_ord1)
+```
+
+
+```{r}
+fig1_Sample_T <- arrangeGrob(sep__2[[1]], sep__2[[2]], sep__2[[3]], sep__2[[4]], sep_0[[1]], sep_0[[2]], sep_0[[3]], sep_0[[4]], sep_2[[1]], sep_2[[2]], sep_2[[3]], sep_2[[4]], sep_4[[1]], sep_4[[2]], sep_4[[3]], sep_4[[4]], sep_6[[1]], sep_6[[2]], sep_6[[3]], sep_6[[4]], sep_12[[1]], sep_12[[2]], sep_12[[3]], sep_12[[4]], nrow = 6, ncol = 4)
+grid.arrange(fig1_Sample_T)
+ggsave(fig1_Sample_T, filename = "./fig/figure1_Sample_T.pdf",width = 30, height = 30, units = "in")
+tiff(filename = "./fig/figure1_Sample_T.tiff" ,width=30, height=30, units="in", compression="lzw", res=150)
+grid.arrange(fig1_Sample_T)
+dev.off()
+```
+
+# Alpha diversity
+
+```{r}
+S_shannon <- vegan::diversity(ps3@otu_table, index = "shannon", MARGIN = 1)
+S_simpson <- vegan::diversity(ps3@otu_table, index = "simpson", MARGIN = 1)
+
+D_alpha <- ps3@sam_data
+D_alpha <- as.data.frame(as.matrix(D_alpha))
+D_shannon <- D_alpha
+D_shannon$shannon <- S_shannon
+D_shannon$t <- factor(D_shannon$t, levels = c(-2,0,2,4,6,12))
+
+D_simpson <- D_alpha
+D_simpson$simpson <- S_simpson
+D_simpson$t <- factor(D_simpson$t, levels = c(-2,0,2,4,6,12))
+#D_invsimpson <- D_alpha
+#D_invsimpson$invsimpson <- S_invsimpson
+
+```
+
+```{r}
+D_shannon1 <- D_shannon[D_shannon$Treatment %in% c("Control","Longitudinal"),]
+D_simpson1 <- D_simpson[D_simpson$Treatment %in% c("Control","Longitudinal"),]
+
+p1 <- ggplot(data = D_shannon1) +  geom_point(aes(x = t, y = shannon, color = Treatment)) + geom_line(aes(x = t, y = shannon, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) + facet_wrap(~Treatment)  + theme_bw() + ggtitle("A.") + labs(x = "",y = "Shannon diversity") +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3")) + ylim(c(0.9,5))
+
+p2 <- ggplot(data = D_simpson1) +  geom_point(aes(x = t, y = simpson, color = Treatment)) + geom_line(aes(x = t, y = simpson, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) +facet_wrap(~Treatment)  +labs(x = "",y = "Simpson diversity") + theme_bw() + ggtitle("B.") + theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3")) + ylim(c(0.4,1))
+```
+
+```{r}
+D_shannon2 <- D_shannon[D_shannon$Treatment %in% c("Duodopa","DBS"),]
+D_simpson2 <- D_simpson[D_simpson$Treatment %in% c("Duodopa","DBS"),]
+
+p3 <- ggplot(data = D_shannon2) +  geom_point(aes(x = t, y = shannon, color = Treatment)) + geom_line(aes(x = t, y = shannon, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) + facet_wrap(~Treatment)  + theme_bw() + ggtitle("C.") + labs(x = "",y = "Shannon diversity") +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3"))
+
+p4 <- ggplot(data = D_simpson2) +  geom_point(aes(x = t, y = simpson, color = Treatment)) + geom_line(aes(x = t, y = simpson, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) +facet_wrap(~Treatment)  +labs(x = "",y = "Simpson diversity") + theme_bw() + ggtitle("D.") + theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3"))
+```
+
+```{r}
+D_shannon3 <- D_shannon[(D_shannon$Treatment %in% c("Duodopa","DBS"))&(D_shannon$t %in% c(0,6,12)),]
+D_simpson3 <- D_simpson[(D_simpson$Treatment %in% c("Duodopa","DBS"))&(D_simpson$t %in% c(0,6,12)),]
+
+p5 <- ggplot(data = D_shannon3) +  geom_point(aes(x = t, y = shannon, color = Treatment)) + geom_line(aes(x = t, y = shannon, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) + facet_wrap(~Treatment)  + theme_bw() + ggtitle("C.") + labs(x = "",y = "Shannon diversity") +
+  theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3")) + ylim(c(0.9,5))
+
+p6 <- ggplot(data = D_simpson3) +  geom_point(aes(x = t, y = simpson, color = Treatment)) + geom_line(aes(x = t, y = simpson, color = Treatment, group = id)) + theme(axis.text.x = element_text(angle = 45)) +facet_wrap(~Treatment)  +labs(x = "",y = "Simpson diversity") + theme_bw() + ggtitle("D.") + theme(axis.text.x = element_text(color = "black"),
+  strip.background = element_rect(fill = "white"),
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.x = element_line(color = "gray70", size = 0.4),
+  panel.grid.minor.x = element_blank(),
+  legend.text.align = 0,
+  legend.key.height = unit(4, "mm"),
+  legend.key.width = unit(4, "mm"),
+  legend.text = element_text(size = 9),
+  legend.margin = ggplot2::margin(r = 7, unit = "mm")) + scale_color_manual(values = c("#66C2A5","#FC8D62","#8DA0CB", "#E78AC3")) + ylim(c(0.4,1))
+```
+
+
+```{r}
+fig3 <- ggpubr::ggarrange(p1,p2,p5,p6,ncol = 2,nrow = 3,common.legend = T)
+ggsave(fig3, filename = "./fig/figure3.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure3.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig3
+dev.off()
+```
+
+# Beta diversity
+
+```{r}
+out.pcoa.log <- ordinate(pslog,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+df = cbind(out.pcoa.log$vectors[,1:2], ps3@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+var_explained = out.pcoa.log$values$Relative_eig[1:2]
+
+
+p1 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = PD, shape = as.factor(t))) + geom_path(aes(x = Axis.1, y = Axis.2, group = id, colour = PD),  alpha = 0.5, size = 1) + labs(x = paste0("[Axis.1] ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("[Axis.2] ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic() 
+```
+
+```{r}
+p1
+```
+
+```{r}
+out.pcoa3ra <- ordinate(psra,  method = "MDS", distance = "bray")
+evals <- out.pcoa3ra$values[,1]
+
+df = cbind(out.pcoa3ra$vectors[,1:3],psra@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+var_explained = out.pcoa3ra$values$Relative_eig[1:3]
+
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.2, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3,  color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.3, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3,  color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.2, y = Axis.3, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig4 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig4, filename = "./fig/figure4.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure4.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig4
+dev.off()
+```
+
+```{r}
+psra_sub0 <- subset_samples(psra, (Treatment %in% c("Control","Longitudinal")))
+out.pcoa3ra <- ordinate(psra_sub0,  method = "MDS", distance = "bray")
+evals <- out.pcoa3ra$values[,1]
+
+df = cbind(out.pcoa3ra$vectors[,1:3],psra_sub0@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+df1 <- df %>% group_by(id, Treatment) %>% summarise(mean_PC1 = mean(Axis.1, na.rm = TRUE), var_PC1 = var(Axis.1, na.rm = TRUE), mean_PC2 = mean(Axis.2, na.rm = TRUE), var_PC2 = var(Axis.2, na.rm = TRUE), mean_PC3 = mean(Axis.3, na.rm = TRUE), var_PC3 = var(Axis.3, na.rm = TRUE))
+
+df1 <- na.omit(df1)
+
+var_explained = out.pcoa3ra$values$Relative_eig[1:3]
+
+
+p12 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC2, color = Treatment, size = (var_PC1 + var_PC2)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = mean_PC1, y = mean_PC2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2")) + guides(size = FALSE) + ggtitle("A.") 
+
+p13 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC3,  color = Treatment, size = (var_PC1 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = mean_PC1, y = mean_PC2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ guides(size = FALSE) + ggtitle("B.")
+
+p23 <- ggplot(df1) + geom_point(aes(x = mean_PC2, y = mean_PC3,  color = Treatment, size = (var_PC2 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = mean_PC2, y = mean_PC3, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig40 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig40, filename = "./fig/figure40.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure40.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig40
+dev.off()
+```
+
+```{r}
+psra_sub0 <- subset_samples(psra, (Treatment %in% c("Duodopa","DBS")))
+psra_sub1 <- subset_samples(psra_sub0, t %in% c(0,6,12))
+out.pcoa3ra <- ordinate(psra_sub1,  method = "MDS", distance = "bray")
+evals <- out.pcoa3ra$values[,1]
+
+df = cbind(out.pcoa3ra$vectors[,1:3],psra_sub1@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+var_explained = out.pcoa3ra$values$Relative_eig[1:3]
+
+
+p12 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.2, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2")) + ggtitle("A.") 
+
+p13 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.3,  color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.3, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.3, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("B.")
+
+p23 <- ggplot(df) + geom_point(aes(x = Axis.2, y = Axis.3,  color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.2, y = Axis.3, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + stat_ellipse(aes(x = Axis.2, y = Axis.3, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig41 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig41, filename = "./fig/figure41.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure41.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig41
+dev.off()
+```
+
+
+```{r}
+psra_sub1 <- subset_samples(psra, Treatment %in% c("Control","Longitudinal"))
+
+
+out.pcoa3ra1 <- ordinate(psra_sub1,  method = "MDS", distance = "bray")
+df1 = cbind(out.pcoa3ra1$vectors[,1:2],psra_sub1@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra1$values$Relative_eig[1:2]
+#plot_ordination(ps3ra2, out.pcoa3ra3, color = "Cohort",
+#                  shape = "t") +
+#  labs(col = "Cohort", shape = "Time")+
+#  coord_fixed(sqrt(evals[2] / evals[1])) + theme_classic()
+
+psra_sub2 <- subset_samples(psra, Treatment %in% c("Duodopa","DBS"))
+out.pcoa3ra2 <- ordinate(psra_sub2,  method = "MDS", distance = "bray")
+df2 = cbind(out.pcoa3ra2$vectors[,1:2],psra_sub2@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra2$values$Relative_eig[1:2]
+
+#psra_sub3 <- subset_samples(psra, t %in% c(6,12))
+#out.pcoa3ra3 <- ordinate(psra_sub3,  method = "MDS", distance = "bray")
+#df3 = cbind(out.pcoa3ra3$vectors[,1:2],psra_sub3@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+#var_explained = out.pcoa3ra3$values$Relative_eig[1:2]
+
+psra_sub3 <- subset_samples(psra_sub2, t %in% c(0,6,12))
+out.pcoa3ra3 <- ordinate(psra_sub3,  method = "MDS", distance = "bray")
+df3 = cbind(out.pcoa3ra3$vectors[,1:2],psra_sub3@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra3$values$Relative_eig[1:2]
+```
+
+```{r}
+df1$`Treatments` <- "Control vs. Longitudinal"
+df2$`Treatments` <- "Duodopa vs. DBS"
+df3$`Treatments` <- "Duodopa vs. DBS(0,6,12)"
+df <- rbind(df1,df2,df3)
+
+fig5 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.2, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1 "), y = paste0("PC2 ")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2")) + facet_wrap(~Treatments,ncol = 1) + coord_fixed() + theme(legend.position = "top", panel.grid.minor = element_blank(), panel.grid.major =
+element_blank())
+```
+
+```{r}
+ggexport(fig5, filename = "./fig/figure5.pdf",width = 6, height =16, units = "in")
+tiff(filename = "./fig/figure5.tiff" ,width=6, height=16, units="in", compression="lzw", res=150)
+fig5
+dev.off()
+```
+
+
+```{r}
+psra_sub0 <- subset_samples(psra, (Treatment %in% c("Control","Longitudinal")))
+psra_sub1 <- subset_samples(psra_sub0, t == 0)
+
+
+out.pcoa3ra1 <- ordinate(psra_sub1,  method = "MDS", distance = "bray")
+df1 = cbind(out.pcoa3ra1$vectors[,1:2],psra_sub1@sam_data)
+var_explained1 = out.pcoa3ra1$values$Relative_eig[1:2]
+#plot_ordination(ps3ra2, out.pcoa3ra3, color = "Cohort",
+#                  shape = "t") +
+#  labs(col = "Cohort", shape = "Time")+
+#  coord_fixed(sqrt(evals[2] / evals[1])) + theme_classic()
+
+psra_sub2 <- subset_samples(psra_sub0, t == 6)
+out.pcoa3ra2 <- ordinate(psra_sub2,  method = "MDS", distance = "bray")
+df2 = cbind(out.pcoa3ra2$vectors[,1:2],psra_sub2@sam_data) 
+var_explained2 = out.pcoa3ra2$values$Relative_eig[1:2]
+
+#psra_sub3 <- subset_samples(psra, t %in% c(6,12))
+#out.pcoa3ra3 <- ordinate(psra_sub3,  method = "MDS", distance = "bray")
+#df3 = cbind(out.pcoa3ra3$vectors[,1:2],psra_sub3@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+#var_explained = out.pcoa3ra3$values$Relative_eig[1:2]
+
+psra_sub3 <- subset_samples(psra_sub0, t == 12)
+out.pcoa3ra3 <- ordinate(psra_sub3,  method = "MDS", distance = "bray")
+df3 = cbind(out.pcoa3ra3$vectors[,1:2],psra_sub3@sam_data)
+var_explained3 = out.pcoa3ra3$values$Relative_eig[1:2]
+```
+
+```{r}
+df1$`Treatments` <- "t = 0"
+df2$`Treatments` <- "t = 6"
+df3$`Treatments` <- "t = 12"
+df <- rbind(df1,df2,df3)
+df$Treatments <- factor(df$Treatments, levels = c("t = 0","t = 6","t = 12"))
+
+fig5A <- ggplot(df1)+ geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained1[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained1[2],digits = 4), "%"), title = "A.t = 0") +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))
+
+fig5B <- ggplot(df2)+ geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained2[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained2[2],digits = 4), "%"), title = "B.t = 6") +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))
+
+fig5C <- ggplot(df3)+ geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment), size = 2) + labs(x = paste0("PC1: ", 100*round(var_explained3[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained3[2],digits = 4), "%"), title = "C.t = 12") +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(4, "Set2"))
+
+
+fig50 <- ggpubr::ggarrange(fig5A, fig5B, fig5C, nrow = 1, ncol = 3, common.legend = T)
+```
+
+```{r}
+ggexport(fig50, filename = "./fig/figure50.pdf",width = 16, height =6, units = "in")
+tiff(filename = "./fig/figure50.tiff" ,width=16, height=6, units="in", compression="lzw", res=150)
+fig50
+dev.off()
+```
+
+
+```{r}
+psra_withoutC <- subset_samples(psra, Treatment != "Control")
+psra_sub1 <- subset_samples(psra_withoutC, t %in% c(0,6))
+
+out.pcoa3ra1 <- ordinate(psra_sub1,  method = "MDS", distance = "bray")
+df1 = cbind(out.pcoa3ra1$vectors[,1:2],psra_sub1@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra1$values$Relative_eig[1:2]
+#plot_ordination(ps3ra2, out.pcoa3ra3, color = "Cohort",
+#                  shape = "t") +
+#  labs(col = "Cohort", shape = "Time")+
+#  coord_fixed(sqrt(evals[2] / evals[1])) + theme_classic()
+
+psra_sub2 <- subset_samples(psra_withoutC, t %in% c(0,12))
+out.pcoa3ra2 <- ordinate(psra_sub2,  method = "MDS", distance = "bray")
+df2 = cbind(out.pcoa3ra2$vectors[,1:2],psra_sub2@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra2$values$Relative_eig[1:2]
+
+psra_sub3 <- subset_samples(psra_withoutC, t %in% c(6,12))
+out.pcoa3ra3 <- ordinate(psra_sub3,  method = "MDS", distance = "bray")
+df3 = cbind(out.pcoa3ra3$vectors[,1:2],psra_sub3@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE) 
+var_explained = out.pcoa3ra3$values$Relative_eig[1:2]
+```
+
+```{r}
+df1$`TimePoint Subset` <- "t=0 vs. t=6"
+df2$`TimePoint Subset` <- "t=0 vs. t=12"
+df3$`TimePoint Subset` <- "t=6 vs. t=12"
+df <- rbind(df1,df2,df3)
+
+fig6 <- ggplot(df) + geom_point(aes(x = Axis.1, y = Axis.2, color = Treatment, shape = t), size = 0.5) + geom_path(aes(x = Axis.1, y = Axis.2, group = id, colour = Treatment),  alpha = 0.5, size = 0.5) + labs(x = paste0("PC1 "), y = paste0("PC2 ")) +  theme_classic()  + stat_ellipse(aes(x = Axis.1, y = Axis.2, group = Treatment, color = Treatment, lty = Treatment), level = 0.9) + scale_color_manual(values = brewer.pal(3, "Set2")) + facet_wrap(~`TimePoint Subset`,ncol = 1) + coord_fixed() + theme(legend.position = "top", panel.grid.minor = element_blank(), panel.grid.major =
+element_blank())
+```
+
+```{r}
+ggexport(fig6, filename = "./fig/figure6.pdf",width = 6, height =16, units = "in")
+tiff(filename = "./fig/figure6.tiff" ,width=6, height=16, units="in", compression="lzw", res=150)
+fig6
+dev.off()
+```
+## LED and PD composition
+
+```{r}
+LED = psra@sam_data$Total.LED..mg.
+UPDRS = psra@sam_data$UPDRS.Total.Score
+```
+
+```{r}
+D_Score  = data.frame(LED = psra@sam_data$Total.LED..mg., UPDRS = psra@sam_data$UPDRS.Total.Score, t = psra@sam_data$t, id = psra@sam_data$id, Duration = psra@sam_data$PD.Duration, Treatment = psra@sam_data$Treatment)
+
+
+#D_score$t = factor(D_score$t, levels = c(0,6,12))
+#D_score$t = as.factor(as.numeric(D_score$t))
+
+p1 <- ggplot(data = D_Score) +  geom_point(aes(x = LED, y = UPDRS, shape = t),  size = 1.5) + geom_line(aes(x = LED, y = UPDRS, group = id),  alpha = 0.5, size = 1) + labs(x = "LED", y = "UPDRS") +  theme_classic()  
+```
+
+```{r}
+p1
+```
+
+```{r}
+D_Score1 <- D_Score
+D_Score1 <- D_Score1[!is.na(D_Score$LED)&(D_Score1$t %in% c(0,6,12)), ]
+D_Score11 <- D_Score1[D_Score1$Treatment == "Longitudinal", ]
+```
+
+```{r}
+D_Score2 <- data.frame(id = unique(D_Score11$id), LED_0 = 0, LED_6 = 0, LED_12 = 0, UPDRS_0 = 0, UPDRS_6 = 0, UPDRS_12 = 0, Diff_LED = 0, Diff_UPDRS = 0, Duration = 0)
+
+for(i in 1:nrow(D_Score2)){
+  temp_id <- D_Score2$id[i]
+  temp_idx <- which(D_Score1$id == temp_id)
+  temp_0 <- which(D_Score1$id == temp_id & D_Score1$t == 0)
+  temp_6 <- which(D_Score1$id == temp_id & D_Score1$t == 6)
+  temp_12 <- which(D_Score1$id == temp_id & D_Score1$t == 12)
+  
+  if((length(temp_6))&(length(temp_12))){
+    D_Score2[i,] <- data.frame(id = temp_id, LED_0 = D_Score1$LED[temp_0], LED_6 = D_Score1$LED[temp_6], LED_12 = D_Score1$LED[temp_12],UPDRS_0 = D_Score1$UPDRS[temp_0], UPDRS_6 = D_Score1$UPDRS[temp_6], UPDRS_12 = D_Score1$UPDRS[temp_12], Diff_LED = D_Score1$LED[temp_12] - D_Score1$LED[temp_0], Diff_UPDRS = D_Score1$UPDRS[temp_12] - D_Score1$UPDRS[temp_0], Duration = D_Score1$Duration[temp_6])
+  }else if((length(temp_12))){
+    D_Score2[i,] <- data.frame(id = temp_id, LED_0 = D_Score1$LED[temp_0], LED_6 = NA, LED_12 = D_Score1$LED[temp_12],UPDRS_0 = D_Score1$UPDRS[temp_0], UPDRS_6 = NA, UPDRS_12 = D_Score1$UPDRS[temp_12], Diff_LED =NA, Diff_UPDRS = NA, Duration = D_Score1$Duration[temp_12])
+  }else if((length(temp_6))){
+    D_Score2[i,] <- data.frame(id = temp_id,LED_0 = D_Score1$LED[temp_0], LED_6 = D_Score1$LED[temp_6], LED_12 = NA,UPDRS_0 = D_Score1$UPDRS[temp_0], UPDRS_6 = D_Score1$UPDRS[temp_6], UPDRS_12 = NA, Diff_LED =NA, Diff_UPDRS = NA, Duration = D_Score1$Duration[temp_6])
+  }else{
+    D_Score2[i,] <- data.frame(id = temp_id, LED_0 = D_Score1$LED[temp_0], LED_6 = NA, LED_12 = NA,UPDRS_0 = D_Score1$UPDRS[temp_0], UPDRS_6 = NA, UPDRS_12 = NA, Diff_LED =NA, Diff_UPDRS = NA, Duration = D_Score1$Duration[temp_idx])
+  }
+  
+}
+```
+
+```{r}
+D_score <- D_Score2[,c(1,2,4,5,7,8,9)]
+D_score <- na.omit(D_score)
+D_score$sign1 <- sign(D_score[,6])
+D_score$sign2 <- sign(D_score[,7])
+D_score$color <- "up-up"
+for(i in 1:nrow(D_score)){
+  if ((D_score$sign1[i] >= 0)&(D_score$sign2[i] < 0)){
+    D_score$color[i] <- "up-down"
+  }else if((D_score$sign1[i] < 0)&(D_score$sign2[i] < 0)){
+    D_score$color[i] <- "down-down"
+  }else if((D_score$sign1[i] < 0)&(D_score$sign2[i] >= 0)){
+    D_score$color[i] <- "down-up"
+  }
+  else if(D_score$sign1[i] == 0){
+    D_score$color[i] <- "stay-up"
+  }
+}
+D_score11 <- D_score[,c(1,2,4,6,7,10)]
+colnames(D_score11) <- c("id", "LED", "UPDRS", "Diff_LED", "Diff_UPDRS", "Trend")
+D_score11$time <- 0
+D_score12 <- D_score[,c(1,3,5,6,7,10)]
+colnames(D_score12) <- c("id", "LED", "UPDRS", "Diff_LED", "Diff_UPDRS", "Trend")
+D_score12$time <- 12
+D_score1 <- rbind(D_score11, D_score12)
+D_score1$time <- as.factor(D_score1$time)
+p1 <- ggplot(data = D_score1) +  geom_point(aes(x = LED, y = UPDRS, shape = time, color = Trend),  size = 1.5) + geom_line(aes(x = LED, y = UPDRS, group = id , color = Trend),  alpha = 0.5, size = 1) + labs(x = "LED", y = "UPDRS") +  theme_classic()  
+```
+
+```{r}
+p1
+```
+
+
+```{r}
+table(D_score$color)
+```
+
+```{r}
+D_Score3 <- D_score
+D_Score3$RA_LED <- (D_Score3$LED_12 - D_Score3$LED_0)/D_Score3$LED_0
+D_Score3$RA_UPDRS <- (D_Score3$UPDRS_12 - D_Score3$UPDRS_0)/D_Score3$UPDRS_0
+D_Score3$LED_mean <- (D_Score3$LED_0 + D_Score3$LED_12)/2
+D_Score3$UPDRS_mean <- (D_Score3$UPDRS_0 + D_Score3$UPDRS_12)/2
+```
+
+```{r}
+D_Score3$FC_LED <- log(D_Score3$LED_12/D_Score3$LED_0)
+D_Score3$FC_UPDRS <- log(D_Score3$UPDRS_12/D_Score3$UPDRS_0)
+D_Score3$FC_LED[is.na(D_Score3$FC_LED)] = 0
+D_Score3$FC_LED[is.infinite(D_Score3$FC_LED)] = 2
+D_Score3$RA_LED[is.na(D_Score3$RA_LED)] = 0
+D_Score3$RA_LED[is.infinite(D_Score3$RA_LED)] = 5
+```
+
+```{r}
+D_Score31 <- D_Score3
+D_Score31$color[D_Score31$color != "up-up"] = "other"
+p2 <- ggplot(D_Score31) + geom_point(aes(x = Diff_LED, y = Diff_UPDRS, color = color)) + theme_bw()
+```
+
+```{r}
+p2
+```
+
+
+```{r}
+p3 <- ggplot(D_Score3) + geom_point(aes(x = FC_LED, y = FC_UPDRS, color = LED_mean, size = UPDRS_mean)) + theme_bw()
+```
+
+```{r}
+p4 <- ggplot(D_Score3) + geom_point(aes(x = RA_LED, y = RA_UPDRS, color = LED_mean, size = UPDRS_mean)) + theme_bw()
+```
+
+
+```{r}
+fig_sp <- ggpubr::ggarrange(p1,p2,p3,p4,ncol = 2,nrow = 2)
+fig_sp
+ggsave(filename = "fig_sp.pdf",fig_sp,width=16, height=16, units="in")
+```
+
+```{r}
+D_Score2$Diff_LED_zs <- scale(D_Score2$Diff_LED)
+D_Score2$Diff_UPDRS_zs <- scale(D_Score2$Diff_UPDRS)
+p11 <- ggplot(D_Score2) + geom_histogram(aes(x = Diff_LED_zs), fill = "red", bins = 40) + theme_bw() + xlim(c(-3,8))
+p12 <- ggplot(D_Score2) + geom_histogram(aes(x = Diff_UPDRS_zs), fill = "blue", bins = 40) + theme_bw()+ xlim(c(-3,8))
+ggpubr::ggarrange(p11,p12,ncol = 1,nrow = 2)
+```
+
+
+
+
+```{r}
+p21 <- ggplot(D_Score2) + geom_histogram(aes(x = Diff_LED), fill = "red", bins = 40) + theme_bw()
+p22 <- ggplot(D_Score2) + geom_histogram(aes(x = Diff_UPDRS), fill = "blue", bins = 40) + theme_bw()
+ggpubr::ggarrange(p21,p22,ncol = 1,nrow = 2)
+```
+
+```{r}
+fig7 <- ggpubr::ggarrange(p11,p21,p11,p22,ncol = 2,nrow = 2)
+ggexport(fig7, filename = "./fig/figure7.pdf",width = 16, height =6, units = "in")
+tiff(filename = "./fig/figure7.tiff" ,width=16, height=6, units="in", compression="lzw", res=150)
+fig7
+dev.off()
+```
+
+
+## Prior paper
+
+```{r}
+D_Score21 <- na.omit(D_Score2)
+
+D_Score21$Diff_LED60 <- (D_Score21$LED_6 - D_Score21$LED_0)/6
+D_Score21$Diff_LED120 <- (D_Score21$LED_12 - D_Score21$LED_0)/12
+D_Score21$Diff_LED126 <- (D_Score21$LED_12 - D_Score21$LED_6)/6
+
+D_Score21$Diff_UPDRS60 <- (D_Score21$UPDRS_6 - D_Score21$UPDRS_0)/6
+D_Score21$Diff_UPDRS120 <- (D_Score21$UPDRS_12 - D_Score21$UPDRS_0)/12
+D_Score21$Diff_UPDRS126 <- (D_Score21$UPDRS_12 - D_Score21$UPDRS_6)/6
+```
+
+```{r}
+Diff_Score <- D_Score21[,c("Diff_LED60", "Diff_LED120","Diff_LED126","Diff_UPDRS60","Diff_UPDRS120","Diff_UPDRS126")]
+```
+
+```{r}
+Diff_Score_zs <- as.data.frame(scale(Diff_Score))
+Diff_Score_zs$id <- 1:nrow(Diff_Score_zs)
+```
+
+```{r}
+Diff_melt <- melt(Diff_Score_zs, id.vars = "id")
+```
+
+
+```{r}
+p1 <-ggplot(Diff_melt) + geom_histogram(aes(x = value), bins = 40) + facet_wrap(~variable) + theme_bw()
+p1
+```
+
+
+## 12-8
+
+### Fast slow seperation1
+
+```{r}
+D_Score3$type <- c("fast")
+D_Score3$type[(D_Score3$color == "down-down")|(D_Score3$color == "up-down")] = "slow"
+D_Score3$type[(D_Score3$color == "down-up")|(D_Score3$color == "stay-up")] = "other"
+```
+
+```{r}
+psra_sub3 <- subset_samples(psra, (Treatment %in% c("Longitudinal")))
+out.pcoa3ra <- ordinate(psra_sub0,  method = "MDS", distance = "bray")
+evals <- out.pcoa3ra$values[,1]
+
+df = cbind(out.pcoa3ra$vectors[,1:3],psra_sub0@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+df1 <- df %>% group_by(id, Treatment) %>% summarise(mean_PC1 = mean(Axis.1, na.rm = TRUE), var_PC1 = var(Axis.1, na.rm = TRUE), mean_PC2 = mean(Axis.2, na.rm = TRUE), var_PC2 = var(Axis.2, na.rm = TRUE), mean_PC3 = mean(Axis.3, na.rm = TRUE), var_PC3 = var(Axis.3, na.rm = TRUE))
+
+df1 <- na.omit(df1)
+df1_type_match <- match(df1$id, D_Score3$id)
+df1$type <- D_Score3$type[df1_type_match]
+
+var_explained = out.pcoa3ra$values$Relative_eig[1:3]
+
+
+p12 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC2, color = type, size = (var_PC1 + var_PC2)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + scale_color_manual(values = brewer.pal(4, "Set2")) + guides(size = FALSE) + ggtitle("A.") 
+
+p13 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC3,  color = type, size = (var_PC1 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + scale_color_manual(values = brewer.pal(4, "Set2"))+ guides(size = FALSE) + ggtitle("B.")
+
+p23 <- ggplot(df1) + geom_point(aes(x = mean_PC2, y = mean_PC3,  color = type, size = (var_PC2 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic() + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+
+```{r}
+fig9 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig9, filename = "./fig/figure9.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure9.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig9
+dev.off()
+```
+
+## Fast slow seperation2
+
+```{r}
+D_Score21 <- na.omit(D_Score2)
+hyb_diff <- D_Score21$Diff_LED_zs + D_Score21$Diff_UPDRS_zs
+
+q30 <- quantile(hyb_diff,0.7)
+
+D_Score21$type <- "slow"
+D_Score21$type[hyb_diff > q30] <- "fast"
+```
+
+```{r}
+psra_sub3 <- subset_samples(psra, (Treatment %in% c("Longitudinal")))
+out.pcoa3ra <- ordinate(psra_sub0,  method = "MDS", distance = "bray")
+evals <- out.pcoa3ra$values[,1]
+
+df = cbind(out.pcoa3ra$vectors[,1:3],psra_sub0@sam_data) %>% group_by(id) %>% arrange(t,.by_group = TRUE)
+df1 <- df %>% group_by(id, Treatment) %>% summarise(mean_PC1 = mean(Axis.1, na.rm = TRUE), var_PC1 = var(Axis.1, na.rm = TRUE), mean_PC2 = mean(Axis.2, na.rm = TRUE), var_PC2 = var(Axis.2, na.rm = TRUE), mean_PC3 = mean(Axis.3, na.rm = TRUE), var_PC3 = var(Axis.3, na.rm = TRUE))
+
+df1 <- na.omit(df1)
+df1_type_match <- match(df1$id, D_Score21$id)
+df1$type <- D_Score21$type[df1_type_match]
+
+var_explained = out.pcoa3ra$values$Relative_eig[1:3]
+
+
+p12 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC2, color = type, size = (var_PC1 + var_PC2)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%")) +  theme_classic()  + scale_color_manual(values = brewer.pal(4, "Set2")) + guides(size = FALSE) + ggtitle("A.") 
+
+p13 <- ggplot(df1) + geom_point(aes(x = mean_PC1, y = mean_PC3,  color = type, size = (var_PC1 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC1: ", 100*round(var_explained[1],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic()  + scale_color_manual(values = brewer.pal(4, "Set2"))+ guides(size = FALSE) + ggtitle("B.")
+
+p23 <- ggplot(df1) + geom_point(aes(x = mean_PC2, y = mean_PC3,  color = type, size = (var_PC2 + var_PC3)), alpha = 0.5) + labs(x = paste0("PC2: ", 100*round(var_explained[2],digits = 4), "%"), y = paste0("PC3: ", 100*round(var_explained[3],digits = 4), "%")) +  theme_classic() + scale_color_manual(values = brewer.pal(4, "Set2"))+ ggtitle("C.")
+```
+
+```{r}
+fig91 <- ggpubr::ggarrange(p12,p13,p23,ncol = 2,nrow = 2,common.legend = T)
+ggexport(fig91, filename = "./fig/figure91.pdf",width = fullpage, height = maxhi*0.75, units = "in")
+tiff(filename = "./fig/figure91.tiff" ,width=12, height=8, units="in", compression="lzw", res=150)
+fig91
+dev.off()
+```
+
+## Fast slow Volcano
+
+```{r}
+psra_sub0 <- subset_samples(psra, (Treatment %in% c("Control","Longitudinal")))
+ps_fam <- tax_glom(psra_sub0, taxrank = "Genus")
+ps_fam_melt <- psmelt(ps_fam)
+```
+
+
+### Seperation 1
+
+```{r}
+eps = 1e-5
+fam_tab <- names(table(ps_fam_melt$Genus))
+p_fam_time <- data.frame(p1 = 1, p2 = 1, type = "t = 6")
+for(i in 1:length(fam_tab)){
+  idx1 <- which(ps_fam_melt$Genus == fam_tab[i])
+  ps_fam_sub <- ps_fam_melt[idx1,]
+  ps_fam_sub1 <- ps_fam_sub[,c("id","t","Treatment","Abundance")]
+  ps_fam_spread <- ps_fam_sub1 %>% spread(t, Abundance)
+  ps_fam_spread <- na.omit(ps_fam_spread)
+  ps_fam_spread <- ps_fam_spread %>% filter(Treatment == "Longitudinal")
+  id_match <- match(ps_fam_spread$id, D_Score3$id)
+  ps_fam_spread$type <- D_Score3$type[id_match]
+  
+  colnames(ps_fam_spread)[c(3,4,5)] <- c("t0","t6","t12")
+  p1_fam <- kruskal.test(t0~type, ps_fam_spread)$p.value
+  p6_fam <- kruskal.test(t6~type, ps_fam_spread)$p.value
+  p12_fam <- kruskal.test(t12~type, ps_fam_spread)$p.value
+  time_res <- c(p1_fam, p6_fam, p12_fam)
+  time_res[is.na(time_res)] = - 1 - eps
+  time_res[time_res > 1 - eps] = eps
+  time_res[time_res < eps] = eps
+  
+  temp <- data.frame(p1 = c(time_res[1], time_res[1]), p2 = c(time_res[2],time_res[3]), type = c("t=6","t=12"))
+  p_fam_time <- rbind(p_fam_time, temp)
+}
+p_fam_time <- p_fam_time[-1,]
+p_fam_time <- as.data.frame(p_fam_time)
+colnames(p_fam_time) <- c("p1","p2", "type")
+p_fam_time$name <- rep(fam_tab,each = 2)
+```
+
+```{r}
+
+df_annotate <- p_fam_time[(p_fam_time$p2<0.05)|(p_fam_time$p1<0.05),]
+df_annotate <- df_annotate[!duplicated(df_annotate$name),]
+
+fig_921 <- ggplot(p_fam_time) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = name),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = name)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05))
+fig_921
+```
+
+```{r}
+ggsave(fig_921, filename = "fig_921.pdf")
+```
+
+
+### Seperation 2
+
+```{r}
+eps = 1e-5
+fam_tab <- names(table(ps_fam_melt$Genus))
+
+p_fam_time <- data.frame(p1 = 1, p2 = 1, type = "t = 6")
+for(i in 1:length(fam_tab)){
+  idx1 <- which(ps_fam_melt$Genus == fam_tab[i])
+  ps_fam_sub <- ps_fam_melt[idx1,]
+  ps_fam_sub1 <- ps_fam_sub[,c("id","t","Treatment","Abundance")]
+  ps_fam_spread <- ps_fam_sub1 %>% spread(t, Abundance)
+  ps_fam_spread <- na.omit(ps_fam_spread)
+  ps_fam_spread <- ps_fam_spread %>% filter(Treatment == "Longitudinal")
+  id_match <- match(ps_fam_spread$id, D_Score21$id)
+  ps_fam_spread$type <- D_Score21$type[id_match]
+  
+  colnames(ps_fam_spread)[c(3,4,5)] <- c("t0","t6","t12")
+  p1_fam <- wilcox.test(t0~type, ps_fam_spread)$p.value
+  p6_fam <- wilcox.test(t6~type, ps_fam_spread)$p.value
+  p12_fam <- wilcox.test(t12~type, ps_fam_spread)$p.value
+  time_res <- c(p1_fam, p6_fam, p12_fam)
+  time_res[is.na(time_res)] = - 1 - eps
+  time_res[time_res > 1 - eps] = eps
+  time_res[time_res < eps] = eps
+  
+  temp <- data.frame(p1 = c(time_res[1], time_res[1]), p2 = c(time_res[2],time_res[3]), type = c("t=6","t=12"))
+  p_fam_time <- rbind(p_fam_time, temp)
+}
+p_fam_time <- p_fam_time[-1,]
+p_fam_time <- as.data.frame(p_fam_time)
+colnames(p_fam_time) <- c("p1","p2", "type")
+p_fam_time$name <- rep(fam_tab,each = 2)
+```
+
+```{r}
+df_annotate <- p_fam_time[(p_fam_time$p2<0.05)|(p_fam_time$p1<0.05),]
+df_annotate <- df_annotate[!duplicated(df_annotate$name),]
+
+fig_922 <- ggplot(p_fam_time) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = name),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = name)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05))
+fig_922
+```
+
+```{r}
+ggsave(fig_922, filename = "fig_922.pdf")
+```
+
+# 2020.12.17
+
+```{r}
+ps_sub0 <- subset_samples(ps3, id %in% D_Score3$id)
+D_Score31$type <- D_Score31$color
+D_Score31$type[D_Score31$type == "up-up"] = "fast"
+D_Score31$type[D_Score31$type != "fast"] = "slow"
+```
+
+```{r}
+ggplot(D_Score31) + geom_point(aes(x = Diff_LED, y = Diff_UPDRS, color = type)) + theme_bw() + guides(guide_legend(title = "")) + xlab("LED Difference") + ylab("UPDRS Difference")
+```
+
+
+```{r}
+psgen <- tax_glom(ps_sub0, "Genus")
+psgen@sam_data$t = as.numeric(as.character(psgen@sam_data$t))
+
+psgen0 <- subset_samples(psgen, (t == 0))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen0@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen0@tax_table[,6]
+
+mm <- model.matrix(id ~  type , data = D_Score31)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_0 <- aldex(gen_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_11 = rep("1",nrow(gen_aldex_0))
+color_11[(abs(gen_aldex_0$diff.btw)>1)&(gen_aldex_0$wi.ep<0.1)] = "2"
+df_anno = gen_aldex_0[(abs(gen_aldex_0$diff.btw)>1)&(gen_aldex_0$wi.ep<0.1),]
+p11 = ggplot(gen_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_11)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Genus t=0") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p11
+```
+
+
+```{r}
+psgen6 <- subset_samples(psgen, (t == 6))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen6@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen6@tax_table[,6]
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_6 <- aldex(gen_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_21 = rep("1",nrow(gen_aldex_6))
+color_21[(abs(gen_aldex_6$diff.btw)>1)&(gen_aldex_6$wi.ep<0.1)] = "2"
+df_anno = gen_aldex_6[(abs(gen_aldex_6$diff.btw)>1)&(gen_aldex_6$wi.ep<0.1),]
+p21 = ggplot(gen_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_21)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none")+ ggtitle("Genus t=6")+ xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p21
+```
+
+
+```{r}
+psgen12 <- subset_samples(psgen, (t == 12))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen12@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen12@tax_table[,6]
+
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_12 <- aldex(gen_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_31 = rep("1",nrow(gen_aldex_12))
+color_31[(abs(gen_aldex_12$diff.btw)>1)&(gen_aldex_12$wi.ep<0.1)] = "2"
+df_anno = gen_aldex_12[(abs(gen_aldex_12$diff.btw)>1)&(gen_aldex_12$wi.ep<0.1),]
+p31 = ggplot(gen_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_31)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Genus t=12") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p31
+```
+
+Family
+
+```{r}
+psfam <- tax_glom(ps_sub0, "Family")
+psfam <- subset_samples(psfam)
+psfam@sam_data$t = as.numeric(as.character(psfam@sam_data$t))
+
+psfam0 <- subset_samples(psfam, (t == 0))
+#print(psfam1@sam_data$t)
+fam_table = t(as.data.frame(psfam0@otu_table))
+print(dim(fam_table))
+rownames(fam_table) = psfam0@tax_table[,5]
+#fam_clr <- aldex.clr(fam_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_0 <- aldex(fam_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_12 = rep("1",nrow(fam_aldex_0))
+color_12[(abs(fam_aldex_0$diff.btw)>1)&(fam_aldex_0$wi.ep<0.1)] = "2"
+df_anno = fam_aldex_0[(abs(fam_aldex_0$diff.btw)>1)&(fam_aldex_0$wi.ep<0.1),]
+p12 = ggplot(fam_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_12)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Family t=0") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p12
+```
+
+
+```{r}
+psfam6 <- subset_samples(psfam, (t == 6))
+#print(psfam1@sam_data$t)
+fam_table = t(as.data.frame(psfam6@otu_table))
+print(dim(fam_table))
+rownames(fam_table) = psfam6@tax_table[,5]
+
+#  print(mm)
+#fam_clr <- aldex.clr(fam_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_6 <- aldex(fam_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_22 = rep("1",nrow(fam_aldex_6))
+color_22[(abs(fam_aldex_6$diff.btw)>1)&(fam_aldex_6$wi.ep<0.1)] = "2"
+df_anno = fam_aldex_6[(abs(fam_aldex_6$diff.btw)>1)&(fam_aldex_6$wi.ep<0.1),]
+p22 = ggplot(fam_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_22)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Family t=6") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p22
+```
+
+
+```{r}
+psfam12 <- subset_samples(psfam, (t == 12))
+#print(psfam1@sam_data$t)
+gen_table = t(as.data.frame(psfam12@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psfam12@tax_table[,5]
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_12 <- aldex(gen_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_32 = rep("1",nrow(fam_aldex_12))
+color_32[(abs(fam_aldex_12$diff.btw)>1)&(fam_aldex_12$wi.ep<0.1)] = "2"
+df_anno = fam_aldex_12[(abs(fam_aldex_12$diff.btw)>1)&(fam_aldex_12$wi.ep<0.1),]
+p32 = ggplot(fam_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_32)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none")+ ggtitle("Family t=12") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p32
+```
+
+Order
+
+```{r}
+psord <- tax_glom(ps_sub0, "Order")
+psord <- subset_samples(psord)
+psord@sam_data$t = as.numeric(as.character(psord@sam_data$t))
+
+psord0 <- subset_samples(psord, (t == 0))
+ord_table = t(as.data.frame(psord0@otu_table))
+print(dim(ord_table))
+rownames(ord_table) = psord0@tax_table[,4]
+#  print(mm)
+#ord_clr <- aldex.clr(ord_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_0 <- aldex(ord_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_13 = rep("1",nrow(ord_aldex_0))
+color_13[(abs(ord_aldex_0$diff.btw)>1)&(ord_aldex_0$wi.ep<0.1)] = "2"
+df_anno = ord_aldex_0[(abs(ord_aldex_0$diff.btw)>1)&(ord_aldex_0$wi.ep<0.1),]
+p13 = ggplot(ord_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_13)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=0") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p13
+```
+
+
+```{r}
+psord6 <- subset_samples(psord, (t == 6))
+#print(psord1@sam_data$t)
+ord_table = t(as.data.frame(psord6@otu_table))
+print(dim(ord_table))
+rownames(ord_table) = psord6@tax_table[,4]
+
+#  print(mm)
+#ord_clr <- aldex.clr(ord_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_6 <- aldex(ord_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_23 = rep("1",nrow(ord_aldex_6))
+color_23[(abs(ord_aldex_6$diff.btw)>1)&(ord_aldex_6$wi.ep<0.1)] = "2"
+df_anno = ord_aldex_6[(abs(ord_aldex_6$diff.btw)>1)&(ord_aldex_6$wi.ep<0.1),]
+p23 = ggplot(ord_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_23)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=6") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p23
+```
+
+
+```{r}
+psord12 <- subset_samples(psord, (t == 12))
+#print(psord1@sam_data$t)
+gen_table = t(as.data.frame(psord12@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psord12@tax_table[,4]
+
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_12 <- aldex(gen_table, D_Score31$type, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_33 = rep("1",nrow(ord_aldex_12))
+color_33[(abs(ord_aldex_12$diff.btw)>1)&(ord_aldex_12$wi.ep<0.1)] = "2"
+df_anno = ord_aldex_12[(abs(ord_aldex_12$diff.btw)>1)&(ord_aldex_12$wi.ep<0.1),]
+p33 = ggplot(ord_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_33)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=12") + xlim(c(-3.5,3.5)) + ylim(c(0,5.5))
+p33
+```
+
+```{r}
+fig_volcano <- ggpubr::ggarrange(p11,p21,p31,p12,p22,p32,p13,p23,p33,ncol = 3,nrow = 3)
+fig_volcano
+ggsave(filename = "fig_volcano_fs.pdf",fig_volcano,width=16, height=16, units="in")
+```
+
+```{r}
+df11 <- gen_aldex_0
+df11$t = 0
+df11$taxa = "Genus"
+df21 <- gen_aldex_6
+df21$t = 6
+df21$taxa = "Genus"
+df31 <- gen_aldex_12
+df31$t = 12
+df31$taxa = "Genus"
+
+df12 <- fam_aldex_0
+df12$t = 0
+df12$taxa = "Family"
+df22 <- fam_aldex_6
+df22$t = 6
+df22$taxa = "Family"
+df32 <- fam_aldex_12
+df32$t = 12
+df32$taxa = "Family"
+
+df13 <- ord_aldex_0
+df13$t = 0
+df13$taxa = "Order"
+df23 <- ord_aldex_6
+df23$t = 6
+df23$taxa = "Order"
+df33 <- ord_aldex_12
+df33$t = 12
+df33$taxa = "Order"
+
+df <- rbind(df11, df21, df31, df12, df22, df32, df13, df23, df33)
+write.csv(df, file = "volcano_fs.csv")
+```
+
+```{r}
+gen_tab <- table(c(rownames(df11),rownames(df21),rownames(df31)))
+gen_name <- names(which(gen_tab == 3))
+fam_tab <- table(c(rownames(df12),rownames(df22),rownames(df32)))
+fam_name <- names(which(fam_tab == 3))
+ord_tab <- table(c(rownames(df13),rownames(df23),rownames(df33)))
+ord_name <- names(which(ord_tab == 3))
+
+
+df11_u <- df11[gen_name, ]
+df21_u <- df21[gen_name, ]
+df31_u <- df31[gen_name, ]
+df1 <- data.frame(taxa = gen_name, p1 = rep(df11_u$wi.ep, 2), p2 = c(df21_u$wi.ep, df31_u$wi.ep), t = c(rep("6",length(gen_name)),rep("12",length(gen_name))))
+
+df12_u <- df12[fam_name, ]
+df22_u <- df22[fam_name, ]
+df32_u <- df32[fam_name, ]
+df2 <- data.frame(taxa = fam_name, p1 = rep(df12_u$wi.ep, 2), p2 = c(df22_u$wi.ep, df32_u$wi.ep), t = c(rep("6",length(fam_name)),rep("12",length(fam_name))))
+
+df13_u <- df13[ord_name, ]
+df23_u <- df23[ord_name, ]
+df33_u <- df33[ord_name, ]
+df3 <- data.frame(taxa = ord_name, p1 = rep(df13_u$wi.ep, 2), p2 = c(df23_u$wi.ep, df33_u$wi.ep), t = c(rep("6",length(ord_name)),rep("12",length(ord_name))))
+```
+
+
+```{r}
+
+df_annotate1 <- df1[(df1$p2<0.1)|(df1$p1<0.1),]
+df_annotate1 <- df_annotate1[!duplicated(df_annotate1$taxa),]
+
+p1 <- ggplot(df1) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate1, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.1)) + geom_vline(xintercept = -log(0.1)) + ggtitle("Genus") + xlim(c(0,5)) + ylim(c(0,6))
+p1
+```
+
+```{r}
+
+df_annotate2 <- df2[(df2$p2<0.1)|(df2$p1<0.1),]
+df_annotate2 <- df_annotate2[!duplicated(df_annotate2$taxa),]
+
+p2 <- ggplot(df2) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate2, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.1)) + geom_vline(xintercept = -log(0.1)) + ggtitle("Family")+ xlim(c(0,5)) + ylim(c(0,6))
+p2
+```
+
+```{r}
+
+df_annotate3 <- df3[(df3$p2<0.1)|(df3$p1<0.1),]
+df_annotate3 <- df_annotate3[!duplicated(df_annotate3$taxa),]
+
+p3 <- ggplot(df3) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate3, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.1)) + geom_vline(xintercept = -log(0.1)) + ggtitle("Order") + xlim(c(0,5)) + ylim(c(0,6))
+p3
+```
+
+```{r}
+fig_syn <- ggpubr::ggarrange(p1,p2,p3,ncol = 3,nrow = 1, common.legend = T)
+fig_syn
+ggsave(filename = "fig_syn_fs.pdf",fig_syn,width = 18, height=5, units="in")
+```
+
+## Differential of Relative abundance
+
+```{r}
+D_ra <- subset_samples(psra, (Treatment == "Longitudinal") & (id %in% D_Score31$id))
+D_ra0 <- subset_samples(D_ra, t == 0)
+D_ra6 <- subset_samples(D_ra, t == 6)
+D_ra12 <- subset_samples(D_ra, t == 12)
+```
+
+
+```{r}
+id_match0 <- match(D_Score31$id, D_ra0@sam_data$id)
+id_match6 <- match(D_Score31$id, D_ra6@sam_data$id)
+id_match12 <- match(D_Score31$id, D_ra12@sam_data$id)
+
+D6_0 <- D_ra6@otu_table[id_match6,] - D_ra0@otu_table
+D12_0 <-D_ra12@otu_table[id_match6,] - D_ra0@otu_table
+
+rownames(D6_0) <- D_Score31$id
+colnames(D6_0) <- colnames(psra@otu_table)
+rownames(D12_0) <- D_Score31$id
+colnames(D12_0) <- colnames(psra@otu_table)
+rownames(D_Score31) <- D_Score31$id
+#ps_D_ra <- phyloseq(otu_table(D_ra, taxa_are_rows = F), tax_table(psra), sample_data(D_Score3))
+ps_ra_D6 <- phyloseq(otu_table(D6_0, taxa_are_rows = F), tax_table(psra), sample_data(D_Score31))
+ps_ra_D12 <- phyloseq(otu_table(D12_0, taxa_are_rows = F), tax_table(psra), sample_data(D_Score31))
+```
+
+```{r}
+library(ROCR)
+rocpdf<- function(df, method = "random forest", gd = "actual", model_name = method){
+  
+    pred <- df[,method]
+    truth <- df[,gd]
+    predob<- prediction(pred, truth)
+    perf.auc<- performance(predob, measure = 'auc', x.measure = 'cutoff')
+    #
+    perf<- performance(predob, 'tpr','fpr')
+    df<- data.frame(x = attributes(perf)$x.values[[1]],y = attributes(perf)$y.values[[1]], model = model_name)  
+#    p    <- ggplot(data = df)
+#    p + geom_line(aes(x,y),colour = "yellowgreen",size = 1) + 
+#        geom_ribbon(aes(x,ymin = 0,ymax = y),fill = alpha("yellowgreen",0.5)) +
+#        labs(title = paste("ROC Curve & AUC:",(perf.auc@y.values))) + 
+#        xlab("Specificity") +
+#        ylab("Sensitivity") +
+#        theme(plot.title = element_text(size = 17)) 
+    return(list(df = df, auc = perf.auc@y.values[[1]]))
+}
+```
+
+```{r}
+roc_data <- function(micro, PD, nCV= 50){
+  micro = scale(micro)
+  PD = factor(PD)
+  
+  res_train_rf <- data.frame(prob = 0, actual = 1)
+  res_train_svm <- data.frame(prob = 0, actual = 1)
+  
+  res_test_rf <- data.frame(prob = 0, actual = 1)
+  res_test_svm <- data.frame(prob = 0, actual = 1)
+  
+  for(i in 1:nCV){
+    train_id <- sample(1:nrow(micro), 7/10*nrow(micro))
+    train_micro <- micro[train_id,]
+    test_micro <- micro[-train_id,]
+    
+    PD_train <- PD[train_id]
+    PD_test <- PD[-train_id]
+    
+    my_rf <- randomForest(x = train_micro,y = PD_train)
+    rf_train_prob <- my_rf$votes
+    rf_train_res <- my_rf$predicted
+    rf_test_prob <- predict(my_rf,newdata = test_micro, type = "prob")
+    rf_test_res <- predict(my_rf,newdata = test_micro)
+    
+    my_svm <- svm(x = train_micro, y = PD_train, type = 'C',kernel = 'radial',probability = T)
+    svm_train_res <- predict(my_svm, newdata = train_micro, probability = T)
+    svm_train_prob <- attr(svm_train_res,"probabilities")
+    svm_test_res <- predict(my_svm, newdata = test_micro, probability = T)
+    svm_test_prob <- attr(svm_test_res,"probabilities")
+    
+    temp_train_rf <- data.frame(prob = rf_train_prob[,"fast"], actual = as.numeric(PD_train) - 1)
+    temp_train_svm <- data.frame(prob = svm_train_prob[,"fast"], actual = as.numeric(PD_train) - 1)
+    temp_test_rf <- data.frame(prob = rf_test_prob[,"fast"], actual = as.numeric(PD_test) - 1)
+    temp_test_svm <- data.frame(prob = svm_test_prob[,"fast"], actual = as.numeric(PD_test) - 1)
+    rownames(temp_train_rf) = NULL
+    rownames(temp_train_svm) = NULL
+    rownames(temp_test_rf) = NULL
+    rownames(temp_test_svm) = NULL
+    
+    res_train_rf <- rbind(res_train_rf, temp_train_rf)
+    res_train_svm <- rbind(res_train_svm, temp_train_svm)
+  
+    res_test_rf <- rbind(res_test_rf, temp_test_rf)
+    res_test_svm <- rbind(res_test_svm, temp_test_svm)  
+    
+  }
+  res_train_rf = res_train_rf[-1,]
+  res_train_svm = res_train_svm[-1,]
+  res_test_rf = res_test_rf[-1,]
+  res_test_svm = res_test_svm[-1,]
+  
+  return(list(res_train_rf = res_train_rf, res_train_svm = res_train_svm, res_test_rf = res_test_rf,res_test_svm = res_test_svm))
+}
+```
+
+```{r}
+CV_pred <- function(df, y = y, method = "all"){
+  
+  y <- as.factor(y)
+  
+  n <- nrow(df)
+  df <- as.matrix(df)
+  if(method == "all"){
+    pred <- matrix(0, nrow = n, ncol = 4)
+  }else if(method == "rf"){
+    pred <- matrix(0, nrow = n, ncol = 2)
+  }
+  
+  for(i in 1:n){
+    X_train <- df[-i, ]
+    X_test <- matrix(df[i,], nrow =  1)
+    
+    y_train <- y[-i]
+    y_test <- y[i]
+    
+    if(method == "all"){
+      lasso_fit <- cv.glmnet(X_train, y_train, family = "binomial")
+      pred[i,1] <- predict(object = lasso_fit, newx = X_test, type = "response", s = "lambda.min") 
+    
+      svm_fit <- svm(X_train, y = y_train, kernel = "radial", probability = TRUE, type = "C-classification")
+      pred_svm <- predict(object = svm_fit, X_test, probability = TRUE)
+      pred[i,2] <- attr(pred_svm, "probabilities")[1,"1"]
+    
+      rf_fit <- randomForest(x = X_train, y = y_train, ntree = 500)
+      pred[i,3] <- predict(rf_fit, X_test, type="prob")[,"1"]
+    
+      pred[i,4] <- y_test
+    }else if(method == "rf"){
+      
+      rf_fit <- randomForest(x = X_train, y = y_train, ntree = 500)
+      pred[i,1] <- predict(rf_fit, X_test, type="prob")[,"1"]
+    
+      pred[i,2] <- y_test
+    }
+  }
+  if(method == "all"){
+    colnames(pred) <- c("lasso", "svm", "random forest", "actual")
+  }else if(method == "rf"){
+    colnames(pred) <- c("random forest", "actual")
+  }
+  
+  return(pred)
+}
+
+CV_ROC <- function(ps_ra_D12){
+  
+  ps_test <- ps_ra_D12
+  n <- nrow(ps_test@sam_data)
+  
+  psphy <- tax_glom(ps_test, taxrank = "Phylum")
+  #psphy_ra <- transform_sample_counts(psphy, function(x){x / sum(x)})
+  psphy_df <- psphy@otu_table
+  colnames(psphy_df) <- psphy@tax_table[,2]
+  psphy_df_log <- trans_comp(abs(psphy_df), eps = 1e-5, method = "clr")
+  psphy_df_asin <- trans_comp(abs(psphy_df), eps = 1e-5, method = "asin")
+  
+  psord <- tax_glom(ps_test, taxrank = "Order")
+  #psord_ra <- transform_sample_counts(psord, function(x){x / sum(x)})
+  psord_df <- psord@otu_table
+  colnames(psord_df) <- psord@tax_table[,4]
+  psord_df_log <- trans_comp(abs(psord_df), eps = 1e-5, method = "clr")
+  psord_df_asin <- trans_comp(abs(psord_df), eps = 1e-5, method = "asin")
+  
+  psfam <- tax_glom(ps_test, taxrank = "Family")
+  #psfam_ra <- transform_sample_counts(psfam, function(x){x / sum(x)})
+  psfam_df <- psfam@otu_table
+  colnames(psfam_df) <- psfam@tax_table[,5]
+  psfam_df_log <- trans_comp(abs(psfam_df), eps = 1e-5, method = "clr")
+  psfam_df_asin <- trans_comp(abs(psfam_df), eps = 1e-5, method = "asin")
+  
+  psgen <- tax_glom(ps_test, taxrank = "Genus")
+  #psgen_ra <- transform_sample_counts(psgen, function(x){x / sum(x)})
+  psgen_df <- psgen@otu_table
+  colnames(psgen_df) <- psgen@tax_table[,6]
+  psgen_df_log <- trans_comp(abs(psgen_df), eps = 1e-5, method = "clr")
+  psgen_df_asin <- trans_comp(abs(psgen_df), eps = 1e-5, method = "asin")
+  
+  #psotu_ra <- transform_sample_counts(ps_test, function(x){x / sum(x)})
+  psotu_df <- ps_test@otu_table
+  colnames(psotu_df) <- paste(ps_test@tax_table[,6], paste("o.", 1:ncol(psotu_df), sep = ""), sep = ":")
+  psotu_df_log <- trans_comp(abs(psotu_df), eps = 1e-5, method = "clr")
+  psotu_df_asin <- trans_comp(abs(psotu_df), eps = 1e-5, method = "asin")
+  
+  X_list <- list(scale(psphy_df), psphy_df_log, psphy_df_asin, scale(psord_df), psord_df_log, psord_df_asin, scale(psfam_df), psfam_df_log, psfam_df_asin, scale(psgen_df), psgen_df_log, psgen_df_asin, scale(psotu_df), psotu_df_log, psotu_df_asin)
+  
+  y <- as.numeric(as.factor(ps_test@sam_data$type)) - 1
+  
+  CV_pred_func <- purrr::partial(CV_pred, y = y)
+  
+  pred_list <- lapply(X_list, CV_pred_func)
+  
+
+}
+
+roc_method <- function(mat, method = "all"){
+  
+  mat <- as.data.frame(mat)
+  n <- nrow(mat)
+  if(method == "all"){
+    res_roc <- matrix(0, nrow = 1, ncol = 3)
+    roc_lasso <- rocpdf(mat, method = "lasso")
+    roc_svm <- rocpdf(mat, method = "svm")
+    roc_rf <- rocpdf(mat, method = "random forest")
+
+    res_roc <- rbind(roc_lasso$df, roc_svm$df, roc_rf$df)
+    res_auc <- c(roc_lasso$auc, roc_svm$auc, roc_rf$auc)
+    
+    return(list(df = res_roc, auc = res_auc))
+  }else if(method == "rf"){
+    return(rocpdf(mat, method = "random forest"))
+  }
+}
+```
+
+```{r}
+roc_res <- lapply(pred_list, roc_method)
+```
+
+```{r}
+df_phy <- roc_res[[2]]$df
+df_phy$tax <- "Phylum"
+
+df_ord <- roc_res[[5]]$df
+df_ord$tax <- "Order"
+
+df_fam <- roc_res[[8]]$df
+df_fam$tax <- "Family"
+
+df_gen <- roc_res[[11]]$df
+df_gen$tax <- "Genus"
+
+df_asv <- roc_res[[14]]$df
+df_asv$tax <- "ASV"
+
+df_roc_tax <- rbind(df_phy, df_ord, df_fam, df_gen, df_asv)
+df_auc_tax <- rbind(roc_res[[2]]$auc, roc_res[[5]]$auc, roc_res[[8]]$auc, roc_res[[11]]$auc, roc_res[[14]]$auc)
+```
+
+```{r}
+captionrf <- paste0("AUC: ", round(df_auc_tax[1,3], 2),"(Phylum), ", round(df_auc_tax[2,3], 2),"(Order), ", round(df_auc_tax[3,3], 2), "(Family), ",round(df_auc_tax[4,3], 2), "(Genus), ",round(df_auc_tax[5,3], 2), "(ASV)")
+```
+
+```{r}
+df_rf <- df_roc_tax[df_roc_tax$model == "random forest",]
+df_rf$tax <- factor(df_rf$tax, levels = c("Phylum","Order","Family","Genus","ASV"))
+fig_rf <- ggplot(df_rf) + geom_path(aes(x = x,y = y,color = tax),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = captionrf, title = "LOOCV-ROC curve of Random Forest model on different taxanomic level")+ scale_color_manual(values = c("#8DD3C7", "#BEBADA","#FB8072","#80B1D3","#FDB462","#B3DE69","#FCCDE5"))
+```
+
+
+
+```{r}
+
+p_rf_train <- ggplot(data = roc_rf_train) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("RF Training AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_rf_train,2),",", round(auc_ord_rf_train,2),",", round(auc_fam_rf_train,2),",", round(auc_gen_rf_train,2),",", round(auc_otu_rf_train,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_rf_train
+```
+
+```{r}
+roc_rf_test <- rbind(roc_phy_rf_test,roc_ord_rf_test, roc_fam_rf_test, roc_gen_rf_test, roc_otu_rf_test)
+```
+
+```{r}
+
+caption_rf <- paste0("AUC: ", round(auc_phy_rf_test, 2),"(Phylum), ", round(auc_ord_rf_test, 2),"(Order), ", round(auc_fam_rf_test, 2), "(Family), ",round(auc_gen_rf_test, 2), "(Genus), ",round(auc_otu_rf_test, 2), "(ASV)")
+
+
+p_rf_test <- ggplot(data = roc_rf_test) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = "LOOCV-ROC curve of RF model on different taxanomic level:", caption = caption_rf) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_rf_test
+```
+
+```{r}
+roc_svm_train <- rbind(roc_phy_svm_train,roc_ord_svm_train, roc_fam_svm_train, roc_gen_svm_train, roc_otu_svm_train)
+```
+
+```{r}
+p_svm_train <- ggplot(data = roc_svm_train) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("SVM training AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_svm_train,2),",", round(auc_ord_svm_train,2),",", round(auc_fam_svm_train,2),",", round(auc_gen_svm_train,2),",", round(auc_otu_svm_train,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_svm_train
+```
+
+```{r}
+roc_svm_test <- rbind(roc_phy_svm_test,roc_ord_svm_test, roc_fam_svm_test, roc_gen_svm_test, roc_otu_svm_test)
+```
+
+```{r}
+p_svm_test <- ggplot(data = roc_svm_test) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("SVM testing AUC(Phy, Ord, Fam, Gen, OTU):",round(auc_phy_svm_test,2),",", round(auc_ord_svm_test,2),",", round(auc_fam_svm_test,2),",", round(auc_gen_svm_test,2),",", round(auc_otu_svm_test,digits = 2))) + 
+        xlab("1 - Specificity") +
+        ylab("Sensitivity") +
+        theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_svm_test
+```
+
+### 2020.1.12
+
+The effect of selection of threshold.
+
+```{r}
+LED_sort <- sort(unique(D_Score3$Diff_LED),decreasing = T)
+UPDRS_sort <- sort(unique(D_Score3$Diff_UPDRS),decreasing = T)
+
+LED_list <- c(-98,-50,-25,-1,0,12.5,15,19,37.5,41,50)
+UPDRS_list <- c(-6,-5,-4,-1,0,2,3,4,5,6,7,8,9,10)
+
+psotu_df <- as.data.frame(ps_ra_D12@otu_table)
+colnames(psotu_df) <- paste("OTU",1:ncol(psotu_df),sep = ":")
+psotu_df_log <- log(abs(psotu_df) + eps)
+psotu_df_log <- scale(psotu_df_log)
+
+auc_res_rf <- array(0, dim = c(length(LED_list), length(UPDRS_list), 5))
+
+group = c()
+
+for(i in 1:length(LED_list)){
+  for(j in 1:length(UPDRS_list)){
+    LED_thresh <- LED_list[i]
+    UPDRS_thresh <- UPDRS_list[j]
+    
+    group[1:nrow(D_Score3)] <- "slow"
+    group[(D_Score3$Diff_LED > LED_thresh)&(D_Score3$Diff_UPDRS > UPDRS_thresh)] <- "fast"
+    D_Score31$type = group
+    
+    ps_ra_D12 <- phyloseq(otu_table(D12_0, taxa_are_rows = F), tax_table(psra), sample_data(D_Score31))
+    PD = sample_data(ps_ra_D12)$type
+    
+    psphy <- tax_glom(ps_ra_D12, taxrank = "Phylum")
+  #psphy_ra <- transform_sample_counts(psphy, function(x){x / sum(x)})
+    psphy_df <- psphy@otu_table
+    colnames(psphy_df) <- psphy@tax_table[,2]
+    psphy_df_log <- trans_comp(abs(psphy_df), eps = 1e-5, method = "clr")
+  
+    psord <- tax_glom(ps_ra_D12, taxrank = "Order")
+  #psord_ra <- transform_sample_counts(psord, function(x){x / sum(x)})
+    psord_df <- psord@otu_table
+    colnames(psord_df) <- psord@tax_table[,4]
+    psord_df_log <- trans_comp(abs(psord_df), eps = 1e-5, method = "clr")
+  
+    psfam <- tax_glom(ps_ra_D12, taxrank = "Family")
+  #psfam_ra <- transform_sample_counts(psfam, function(x){x / sum(x)})
+    psfam_df <- psfam@otu_table
+    colnames(psfam_df) <- psfam@tax_table[,5]
+    psfam_df_log <- trans_comp(abs(psfam_df), eps = 1e-5, method = "clr")
+  
+    psgen <- tax_glom(ps_ra_D12, taxrank = "Genus")
+    #psgen_ra <- transform_sample_counts(psgen, function(x){x / sum(x)})
+    psgen_df <- psgen@otu_table
+    colnames(psgen_df) <- psgen@tax_table[,6]
+    psgen_df_log <- trans_comp(abs(psgen_df), eps = 1e-5, method = "clr")
+    
+    #psotu_ra <- transform_sample_counts(ps_test, function(x){x / sum(x)})
+    psotu_df <- ps_ra_D12@otu_table
+    colnames(psotu_df) <- paste(ps_test@tax_table[,6], paste("o.", 1:ncol(psotu_df), sep = ""), sep = ":")
+    psotu_df_log <- trans_comp(abs(psotu_df), eps = 1e-5, method = "clr")
+    
+    
+    X_list <- list(psphy_df_log, psord_df_log, psfam_df_log, psgen_df_log, psotu_df_log)
+    
+    y <- as.numeric(as.factor(group)) - 1
+    
+    CV_pred_func <- purrr::partial(CV_pred, y = y, method = "rf")
+    
+    pred_list <- lapply(X_list, CV_pred_func)
+    roc_rf <- purrr::partial(roc_method, method = "rf")
+    roc_list <- lapply(pred_list, roc_rf)
+
+    auc_res_rf[i,j,] <- c(roc_list[[1]]$auc, roc_list[[2]]$auc, roc_list[[3]]$auc, roc_list[[4]]$auc, roc_list[[5]]$auc)
+  }
+}
+```
+
+```{r}
+dimnames(auc_res_rf) <- list(LED_list, UPDRS_list, c("Phylum", "Order","Family", "Genus", "ASV"))
+rownames(auc_res_rf) <- LED_list
+colnames(auc_res_rf) <- UPDRS_list
+auc_plot_rf <- melt(auc_res_rf[,,5])
+
+auc_plot_rf_temp <- apply(auc_res_rf, 3, melt)
+colnames(auc_plot_rf) <- c("LED_list", "UPDRS_list","AUC_test")
+```
+
+```{r}
+Tps_out = function(x,y,z)
+{
+  sumframe<-structure(list(xvalue = x, yvalue = y, zvalue = z), .Names = c("xvalue", "yvalue", "zvalue"), class = "data.frame")
+  surf<-fields::Tps(cbind(sumframe$xvalue, sumframe$yvalue), sumframe$zvalue, lambda=0.01)
+
+  surf.out=fields::predictSurface(surf)
+
+  return(surf.out)
+}
+```
+
+```{r}
+surf_out <- Tps_out(auc_plot_rf$LED_list, auc_plot_rf$UPDRS_list, auc_plot_rf$AUC_test)
+surf_x = surf_out$x
+surf_y = surf_out$y
+surf_z = surf_out$z
+rownames(surf_z) = surf_x
+colnames(surf_z) = surf_y
+surf_melt = reshape2::melt(surf_z)
+colnames(surf_melt) = c("x","y","z")
+surf_melt = surf_melt[!is.na(surf_melt[,3]),]
+p1 = ggplot2::ggplot(surf_melt) + ggplot2::geom_tile(ggplot2::aes(x = x,y = y,fill = z)) +
+    ggplot2::stat_contour(ggplot2::aes(x = x,y = y,z = z,color = ..level..))+
+    ggplot2::scale_fill_gradientn(colours = GA::jet.colors(256), name = "AUC") + ggplot2::theme_classic()
+p1 = directlabels::direct.label(p1,"bottom.pieces") + ggtitle("AUC value with LED and UPDRS threshold on ASV level") + xlab("LED Difference") + ylab("UPDRS Difference")
+```
+
+
+```{r}
+p1
+```
+
+
+```{r}
+rownames(auc_res_svm) <- LED_list
+colnames(auc_res_svm) <- UPDRS_list
+auc_plot_svm <- melt(auc_res_svm)
+colnames(auc_plot_svm) <- c("LED_list", "UPDRS_list","AUC_test")
+```
+
+```{r}
+surf_out <- Tps_out(auc_plot_svm$LED_list, auc_plot_svm$UPDRS_list, auc_plot_svm$AUC_test)
+surf_x = surf_out$x
+surf_y = surf_out$y
+surf_z = surf_out$z
+rownames(surf_z) = surf_x
+colnames(surf_z) = surf_y
+surf_melt = reshape2::melt(surf_z)
+colnames(surf_melt) = c("x","y","z")
+surf_melt = surf_melt[!is.na(surf_melt[,3]),]
+p2 = ggplot2::ggplot(surf_melt) + ggplot2::geom_tile(ggplot2::aes(x = x,y = y,fill = z)) +
+    ggplot2::stat_contour(ggplot2::aes(x = x,y = y,z = z,color = ..level..))+
+    ggplot2::scale_fill_gradientn(colours = GA::jet.colors(256), name = "AUC") + ggplot2::theme_classic()
+p2 = directlabels::direct.label(p2,"bottom.pieces") + ggtitle("AUC value with LED and UPDRS threshold (SVM)") + xlab("LED Difference") + ylab("UPDRS Difference")
+```
+
+
+```{r}
+p2
+```
+
+```{r}
+fig_robust <- ggpubr::ggarrange(p1,p2,ncol = 2,nrow = 1)
+fig_robust
+ggsave(filename = "fig_robust.pdf",fig_robust,width=16, height=5, units="in")
+```
+
+
+The selection of Clinical variables.
+
+```{r}
+id_match0 <- match(D_Score31$id, D_ra0@sam_data$id)
+id_match6 <- match(D_Score31$id, D_ra6@sam_data$id)
+id_match12 <- match(D_Score31$id, D_ra12@sam_data$id)
+
+D6_0 <- D_ra6@otu_table[id_match6,] - D_ra0@otu_table
+D12_0 <-D_ra12@otu_table[id_match6,] - D_ra0@otu_table
+
+rownames(D6_0) <- D_Score31$id
+colnames(D6_0) <- colnames(psra@otu_table)
+rownames(D12_0) <- D_Score31$id
+colnames(D12_0) <- colnames(psra@otu_table)
+sam_D_ra_12 <- sample_data(D_ra0)
+rownames(sam_D_ra_12) <- D_Score31$id
+
+#ps_D_ra <- phyloseq(otu_table(D_ra, taxa_are_rows = F), tax_table(psra), sample_data(D_Score3))
+ps_ra_D12_sub <- phyloseq(otu_table(D12_0, taxa_are_rows = F), tax_table(psra), sample_data(sam_D_ra_12))
+```
+
+```{r}
+#Nutrition <- c(154:178)
+ps_ra_D12_sub_fam <- tax_glom(ps_ra_D12_sub,"Family")
+X2_full <- as.data.frame(otu_table(ps_ra_D12_sub_fam))
+colnames(X2_full) <- ps_ra_D12_sub_fam@tax_table[,5]
+X2_var <- apply(X2_full, 2, sd)
+X2_full <- X2_full[,X2_var > 1e-6]
+#colnames(X2_full) <- paste("ASV",1:ncol(X2_full),sep = "")
+
+X1_nutri <- data.frame(sample_data(ps_ra_D12_sub))[,c(154:178)]
+group[1:nrow(D_Score3)] <- "slow"
+group[(D_Score3$Diff_LED > 0)&(D_Score3$Diff_UPDRS > 0)] <- "fast"
+
+Y_full = group
+names(Y_full) = D_Score3$id
+```
+
+
+```{r}
+Y_full <- as.factor(Y_full)
+
+trainParams <- TrainParams(randomForestTrainInterface, ntree = 500, getFeatures = forestFeatures)
+predictParams <- PredictParams(randomForestPredictInterface)
+params = list(trainParams, predictParams)
+
+rf_micro = runTests(measurements = X2_full %>% t, 
+                     classes = Y_full, 
+                     datasetName = "Microbiome",
+                     classificationName = "RF-Microbiome", 
+                     permutations = 20, folds = 5,
+                     params = params,
+                     seed = 2020, verbose = 1)
+
+rf_clinical = runTests(measurements = X1_nutri %>% t, 
+                     classes = Y_full, 
+                     datasetName = "Clinical",
+                     classificationName = "RF-Nutrition", 
+                     permutations = 20, folds = 5,
+                     params = params,
+                     seed = 2020, verbose = 1)
+```
+
+```{r}
+rf_micro_sample = calcCVperformance(rf_micro, "sample error")
+rf_micro_balance = calcCVperformance(rf_micro, "accuracy")
+
+rf_clinical_sample = calcCVperformance(rf_clinical, "sample error")
+rf_clinical_balance = calcCVperformance(rf_clinical, "accuracy")
+```
+
+```{r}
+ez_sample <- names(rf_micro_sample@performance$`Sample-wise Error Rate`)[rf_micro_sample@performance$`Sample-wise Error Rate` <= 0.1]
+
+hard_sample <- names(rf_micro_sample@performance$`Sample-wise Error Rate`)[rf_micro_sample@performance$`Sample-wise Error Rate` > 0.1]
+
+Y_dt <- as.character(Y_full)
+names(Y_dt) <- names(Y_full)
+Y_dt[ez_sample] <- "Easy"
+Y_dt[hard_sample] <- "Hard"
+Y_dt <- as.factor(Y_dt)
+X <- as.matrix(X1_nutri)
+```
+
+```{r}
+tree1 <- rpart::rpart(Y_dt ~ X, method = "class", control = rpart.control(cp = 0.04))
+#tree1 <- rpart::prune(tree1, thr = 0.1, cp= tree1$cptable[which.min(tree1$cptable[,"xerror"]),"CP"])
+```
+
+```{r}
+rattle::fancyRpartPlot(tree1)
+```
+
+```{r}
+X2_full21 <- X2_full[X1_nutri[,"Tot_Alcohol_g_per_day"] >= 3,]
+Y_full21 <- Y_full[X1_nutri[,"Tot_Alcohol_g_per_day"] >= 3]
+X2_full22 <- X2_full[X1_nutri[,"Tot_Alcohol_g_per_day"] < 3,]
+Y_full22 <- Y_full[X1_nutri[,"Tot_Alcohol_g_per_day"] < 3]
+```
+
+```{r}
+rf_micro21 = runTests(measurements = X2_full21 %>% t, 
+                     classes = Y_full21, 
+                     datasetName = "Microbiome",
+                     classificationName = "RF-Microbiome01", 
+                     permutations = 20, folds = 5,
+                     params = params,
+                     seed = 2020, verbose = 1)
+
+rf_micro22 = runTests(measurements = X2_full22 %>% t, 
+                     classes = Y_full22, 
+                     datasetName = "Microbiome",
+                     classificationName = "RF-Microbiome02", 
+                     permutations = 20, folds = 5,
+                     params = params,
+                     seed = 2020, verbose = 1)
+```
+
+```{r}
+rf_prob <- function(rf_obj){
+  pred_prob1 <- c()
+  for(i in 1:nrow(rf_obj$individual)){
+    pred_prob1[i] <- sum(rf_obj$individual[i,] == "slow")/ncol(rf_obj$individual)
+  }
+  names(pred_prob1) <- rownames(rf_obj$individual)
+  return(pred_prob1)
+}
+```
+
+
+```{r}
+Z_add <- as.data.frame(X1_nutri)
+Z_add$Pratio <- Z_add[,"Tot_Protein_g_per_day"] * 17 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add$Fratio <- Z_add[,"Tot_Fat_g_per_day"] * 37 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add$Cratio <- Z_add[,"Tot_Avail_Carbs_g_per_day"] * 17 / Z_add[,"Tot_Energy_without_Dietary_Fibre_kJ_per_day"]
+Z_add <- Z_add[,-2]
+Z_add <- as.matrix(Z_add)
+#Z_add <- scale(Z_add)
+Z <- Z_add
+
+temp1 <- InfoGain_cont(Z[,"Tot_Protein_g_per_day"], y)
+temp2 <- InfoGain_cont(Z[,"Tot_Fat_g_per_day"], y)
+temp3 <- InfoGain_cont(Z[,"Tot_Added_Sugars_g_per_day"], y)
+temp4 <- InfoGain_cont(Z[,"Tot_B12_ug_per_day"], y)
+temp5 <- InfoGain_cont(Z[,"Tot_Potas_mg_per_day"], y)
+temp6 <- InfoGain_cont(Z[,"Tot_Fibre_g_per_day"], y)
+temp7 <- InfoGain_cont(Z[,"Tot_Avail_Carbs_g_per_day"], y)
+temp8 <- InfoGain_cont(Z[,"Pratio"], y)
+temp9 <- InfoGain_cont(Z[,"Fratio"], y)
+temp10 <- InfoGain_cont(Z[,"Cratio"], y)
+```
+
+
+
+```{r}
+CV_split <- function(psfam_df_log){
+  
+  split_var <- c("Tot_Protein_g_per_day", "Tot_Fat_g_per_day", "Tot_Added_Sugars_g_per_day", "Tot_Fibre_g_per_day", "Tot_Avail_Carbs_g_per_day", "Pratio", "Fratio", "Cratio")
+  
+  split_num <- c(temp1$s, temp2$s, temp3$s, temp6$s, temp7$s, temp8$s, temp9$s, temp10$s )
+
+  X <- X2_full
+  n <- nrow(X)
+  
+  pred_split <- matrix(0, nrow = n, ncol = 9)
+  y <- as.factor(y)
+  
+  for(i in 1:n){
+    X_train <- X[-i,]
+    X_test <- X[i,]
+    
+    Z_train <- Z[-i,]
+    Z_test <- Z[i,]
+    y_train <- y[-i]
+    y_test <- y[i]
+    
+    
+    for(j in 1:8){
+      
+      idx1 <- which(Z_train[,split_var[j]] > split_num[j])
+      
+      X_train1 <- X_train[idx1,]
+      X_train2 <- X_train[-idx1,]
+      y_train1 <- y_train[idx1]
+      y_train2 <- y_train[-idx1]
+      
+      rf1 <- randomForest(x = X_train1, y = y_train1, ntree = 500)
+      rf2 <- randomForest(x = X_train2, y = y_train2, ntree = 500)
+      
+      sel <- Z_test[split_var[j]] > split_num[j]
+      
+      if(sel){
+        pred_temp <- predict(rf1, X_test, type = "prob")[,2]
+      }else{
+        pred_temp <- predict(rf2, X_test, type = "prob")[,2]
+      }
+      
+      pred_split[i,j] <- pred_temp
+    }
+    pred_split[i,9] <- y_test
+  }
+  return(pred_split)
+}
+```
+
+```{r}
+colnames(pred_split) <- c("Protein", "Fat", "Sugar", "Fiber", "Carb", "Pratio", "Fratio", "Cratio", "actual")
+```
+
+```{r}
+roc_method1 <- function(mat){
+  
+  mat <- as.data.frame(mat)
+  n <- nrow(mat)
+  res_roc <- matrix(0, nrow = 1, ncol = 8)
+  roc_protein <- rocpdf(mat, method = "Protein")
+  roc_fat <- rocpdf(mat, method = "Fat")
+  roc_sugar <- rocpdf(mat, method = "Sugar")
+  roc_fiber <- rocpdf(mat, method = "Fiber")
+  roc_carb <- rocpdf(mat, method = "Carb")
+  roc_pr <- rocpdf(mat, method = "Pratio")
+  roc_fr <- rocpdf(mat, method = "Fratio")
+  roc_cr <- rocpdf(mat, method = "Cratio")
+
+  res_roc <- rbind(roc_protein$df, roc_fat$df, roc_sugar$df,roc_fiber$df,roc_carb$df,roc_pr$df,roc_fr$df,roc_cr$df)
+  res_auc <- c(roc_protein$auc, roc_fat$auc, roc_sugar$auc,roc_fiber$auc,roc_carb$auc,roc_pr$auc,roc_fr$auc,roc_cr$auc)
+  
+  return(list(df = res_roc, auc = res_auc))
+}
+```
+
+```{r}
+roc_split <- roc_method1(pred_split)
+```
+
+```{r}
+df_temp <- df_rf[df_rf$tax == "Family",]
+df_temp <- df_temp[,-c(3,4)]
+df_temp$model <- "Microbiome"
+```
+
+```{r}
+roc_split_df <- rbind(roc_split$df, df_temp)
+roc_split_df$model <- factor(roc_split_df$model, levels = c("Carb", "Fat", "Sugar", "Fiber", "Fratio", "Cratio","Pratio", "Protein", "Microbiome"))
+```
+
+
+```{r}
+caption_split <- paste0("AUC: ", round(df_auc_tax[3,3], 2),"(Microbiome, Family), ", round(roc_split$auc[1], 2),"(Protein), ", round(roc_split$auc[2], 2), "(Fat), ",round(roc_split$auc[5], 2), "(Carb), ",round(roc_split$auc[4], 2), "(Fiber), \n", round(roc_split$auc[3], 2), "(Sugar), ",round(roc_split$auc[6], 2), "(Pratio), ",round(roc_split$auc[7], 2), "(Fratio), ",round(roc_split$auc[8], 2), "(Cratio)")
+```
+
+
+```{r}
+fig_split2 <- ggplot(roc_split_df) + geom_path(aes(x = x,y = y,color = model),size = 1) + theme(plot.title = element_text(size = 10), legend.title = element_blank()) + theme_bw() + geom_abline(slope = 1,intercept = 0) + labs(x = "1 - Specificity", y = "Sensitivity", caption = caption_split, title = "LOOCV-ROC curve of 2 stage Random Forest model \n with different nutrients as splitting node")+ scale_color_manual(values = c("#C6DBEF","#D9D9D9","#E5F5E0","#EFEDF5","#FEE6CE", "#E7E1EF","#A1D99B","#08519C", "#006D2C"))
+```
+
+```{r}
+fig_split2
+```
+
+
+```{r}
+
+roc_data <- rbind(roc_fam$df, roc_alcohol$df, roc_protein$df, roc_fat$df, roc_carb$df, roc_sugar$df)
+
+auc_res <- c(roc_fam$auc, roc_alcohol$auc, roc_protein$auc, roc_fat$auc, roc_carb$auc, roc_sugar$auc)
+
+p_sp_test <- ggplot(data = roc_data) + geom_path(aes(x = x,y = y,color = taxa),size = 1)  +
+        labs(title = paste0("Two-stage model AUC Microbiome"), caption = paste0("AUC(Split by All Sample/Alcohol/Protein/Fat/Carb/Sugar):", round(auc_res[1],2),",", round(auc_res[2],2),",", round(auc_res[3],2),",", round(auc_res[4],2),",", round(auc_res[5],digits = 2), ",", round(auc_res[6],digits = 2))) +   
+  xlab("1 - Specificity") +
+  ylab("Sensitivity") +
+  theme(plot.title = element_text(size = 10)) + theme_bw() + geom_abline(slope = 1,intercept = 0)
+p_sp_test
+```
+
+```{r}
+ggsave(p_sp_test, filename = "p_sp_test.pdf")
+```
+
+
+## aldex2
+
+```{r}
+library(ALDEx2)
+```
+
+```{r}
+pOTUs <- function(psgen, t1, t2,idx = 6, iftab = F){
+
+  psgen1 <- subset_samples(psgen, ((t == t1)|(t == t2))&(Treatment == "Duodopa"))
+#  print(psgen1@sam_data$t)
+#  print(psgen1@sam_data$Treatment)
+  gen_table = t(as.data.frame(psgen1@otu_table))
+#  print(dim(gen_table))
+  rownames(gen_table) = psgen1@tax_table[,idx]
+  meta_data = psgen1@sam_data
+  meta_data1 <- as.data.frame(as.matrix(meta_data))
+  meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)),levels = c(t1,t2))
+  #meta_data1$Treatment <- as.factor(as.character(meta_data1$Treatment))
+  
+  mm <- model.matrix(id ~  t, meta_data1)
+#  print(mm)
+  gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+  glm.test <- aldex.glm(gen_clr)
+  
+  
+  
+  if (iftab){
+    return(glm.test)
+  }else{
+    temp = rep(1,nrow(gen_table))
+    names(temp) = rownames(gen_table)
+    temp[rownames(glm.test)] = glm.test[,8]
+    return(temp)
+  }
+  
+}
+```
+
+```{r}
+logFC <- function(psgen, level= "Genus", t1,t2){
+  eps = 1e-10
+  level1 <- rlang::sym(level)
+  psgen1 <- subset_samples(psgen, ((t == t1)|(t == t2))&(Treatment == "Duodopa"))
+  psgen1 <- transform_sample_counts(psgen1, function(x){x / sum(x)})
+#  print(psgen1@sam_data$t)
+#  print(psgen1@sam_data$Treatment)
+  psgen1_melt <- psmelt(psgen1)
+  ps_summary <- psgen1_melt %>% group_by(!!level1, t) %>% summarise(mean = mean(Abundance)) %>% spread(key = t, value = mean)
+  
+  logFC_1 <- data.frame(taxa = ps_summary[,1],logFC = log((ps_summary[,3]+eps)/(ps_summary[,2]+eps)))
+  colnames(logFC_1) = c("taxa","logFC")
+  return(logFC_1)
+}
+```
+
+```{r}
+#ps3@sam_data$Treatment[ps3@sam_data$Treatment == "Longitudinal"] = "Control"
+psgen <- tax_glom(ps3, "Genus")
+
+psgen <- subset_samples(psgen, Treatment %in% c("DBS","Duodopa"))
+psgen@sam_data$t = as.numeric(as.character(psgen@sam_data$t))
+
+t1 = 0
+t2 = -2
+
+p_20 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,iftab = F)
+
+logFC_20 <- logFC(psgen = psgen, t1 = t1, t2 = t2)
+idx = match(names(p_20),logFC_20[,1])
+logFC_20 = logFC_20[idx,2]
+
+t2 = 6
+p02 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2)
+logFC02 <- logFC(psgen = psgen, t1 = t1, t2 = t2)
+idx = match(names(p02),logFC02[,1])
+logFC02 = logFC02[idx,2]
+
+t2 = 12
+p04 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2)
+logFC04 <- logFC(psgen = psgen, t1 = t1, t2 = t2)
+idx = match(names(p04),logFC04[,1])
+logFC04 = logFC04[idx,2]
+```
+
+
+```{r}
+p_Treatment_Gen <- data.frame(Genus = rep(as.data.frame(as.matrix(psgen@tax_table))[,6],2), p1 = rep(p_20,2),logFC1 = rep(logFC_20,2), p2 = c(p02,p04),logFC2 = c(logFC02,logFC04), type = c(rep("-log(p-value): t=0 vs. t=6",length(p02)),rep("-log(p-value): t=0 vs. t=12",length(p04)))) 
+```
+
+```{r}
+df_annotate <- p_Treatment_Gen[((p_Treatment_Gen$p2<0.1) | (p_Treatment_Gen$p1<0.1)) & ((abs(p_Treatment_Gen$logFC2) > 1.5)|(abs(p_Treatment_Gen$logFC1) > 1.5)),]
+df_annotate <- df_annotate[!duplicated(df_annotate$Genus),]
+p1_Gen <- ggplot(p_Treatment_Gen) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5) + geom_abline(aes(intercept = 0, slope = 1)) + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Genus),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1), y = -log(p2) + 0.1, label = Genus))
+p1_Gen
+```
+
+```{r}
+psgen <- tax_glom(ps3, "Family")
+t1 = 0
+t2 = -2
+p_20 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 5,iftab = F)
+
+logFC_20 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Family")
+idx = match(names(p_20),logFC_20[,1])
+logFC_20 = logFC_20[idx,2]
+
+t2 = 6
+p02 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 5)
+logFC02 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Family")
+idx = match(names(p02),logFC02[,1])
+logFC02 = logFC02[idx,2]
+
+t2 = 12
+p04 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 5)
+logFC04 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Family")
+idx = match(names(p04),logFC04[,1])
+logFC04 = logFC04[idx,2]
+
+```
+
+```{r}
+p_Treatment_Fam <- data.frame(Family = rep(as.vector(as.matrix(psgen@tax_table[,5])),2), p1 = rep(p_20,2),logFC1 = rep(logFC_20,2), p2 = c(p02,p04),logFC2 = c(logFC02,logFC04), type = c(rep("-log(p-value): t=0 vs. t=6",length(p02)),rep("-log(p-value): t=0 vs. t=12",length(p04)))) 
+
+df_annotate <- p_Treatment_Fam[((p_Treatment_Fam$p2<0.1) | (p_Treatment_Fam$p1<0.1)) & ((abs(p_Treatment_Fam$logFC2) > 1.5)|(abs(p_Treatment_Fam$logFC1) > 1.5)),]
+df_annotate <- df_annotate[!duplicated(df_annotate$Family),]
+p1_Fam <- ggplot(p_Treatment_Fam) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5) + geom_abline(aes(intercept = 0, slope = 1)) + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Family),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1), y = -log(p2) + 0.1, label = Family))
+p1_Fam
+```
+
+```{r}
+psgen <- tax_glom(ps3, "Order")
+t1 = 0
+t2 = -2
+p_20 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 4,iftab = F)
+
+logFC_20 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Order")
+idx = match(names(p_20),logFC_20[,1])
+logFC_20 = logFC_20[idx,2]
+
+t2 = 6
+p02 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 4)
+logFC02 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Order")
+idx = match(names(p02),logFC02[,1])
+logFC02 = logFC02[idx,2]
+
+t2 = 12
+p04 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 4)
+logFC04 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Order")
+idx = match(names(p04),logFC04[,1])
+logFC04 = logFC04[idx,2]
+```
+
+```{r}
+p_Treatment_Order <- data.frame(Order = rep(as.vector(as.matrix(psgen@tax_table[,4])),2), p1 = rep(p_20,2),logFC1 = rep(logFC_20,2), p2 = c(p02,p04),logFC2 = c(logFC02,logFC04), type = c(rep("-log(p-value): t=0 vs. t=6",length(p02)),rep("-log(p-value): t=0 vs. t=12",length(p04)))) 
+
+df_annotate <- p_Treatment_Order[((p_Treatment_Order$p2<0.1) | (p_Treatment_Order$p1<0.1)) & ((abs(p_Treatment_Order$logFC2) > 1.5)|(abs(p_Treatment_Order$logFC1) > 1.5)),]
+df_annotate <- df_annotate[!duplicated(df_annotate$Order),]
+p1_Ord <- ggplot(p_Treatment_Order) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5) + geom_abline(aes(intercept = 0, slope = 1)) + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Order),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1), y = -log(p2) + 0.1, label = Order))
+p1_Ord
+```
+
+```{r}
+psgen <- tax_glom(ps3, "Phylum")
+t1 = 0
+t2 = -2
+p_20 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 2,iftab = F)
+
+logFC_20 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Phylum")
+idx = match(names(p_20),logFC_20[,1])
+logFC_20 = logFC_20[idx,2]
+
+t2 = 6
+p02 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 2)
+logFC02 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Phylum")
+idx = match(names(p02),logFC02[,1])
+logFC02 = logFC02[idx,2]
+
+t2 = 12
+p04 <- pOTUs(psgen = psgen, t1 = t1, t2 = t2,idx = 2)
+logFC04 <- logFC(psgen = psgen, t1 = t1, t2 = t2,level = "Phylum")
+idx = match(names(p04),logFC04[,1])
+logFC04 = logFC04[idx,2]
+```
+
+
+```{r}
+p_Treatment_Phy <- data.frame(Phylum = rep(as.vector(as.matrix(psgen@tax_table[,2])),2), p1 = rep(p_20,2),logFC1 = rep(logFC_20,2), p2 = c(p02,p04),logFC2 = c(logFC02,logFC04), type = c(rep("-log(p-value): t=0 vs. t=6",length(p02)),rep("-log(p-value): t=0 vs. t=12",length(p04)))) 
+
+df_annotate <- p_Treatment_Phy[((p_Treatment_Phy$p2<0.1) | (p_Treatment_Phy$p1<0.1)) & ((abs(p_Treatment_Phy$logFC2) > 1.5)|(abs(p_Treatment_Phy$logFC1) > 1.5)),]
+df_annotate <- df_annotate[!duplicated(df_annotate$Phylum),]
+p1_Phy <- ggplot(p_Treatment_Phy) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5) + geom_abline(aes(intercept = 0, slope = 1)) + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Phylum),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1), y = -log(p2) + 0.1, label = Phylum))
+p1_Phy
+```
+
+
+
+```{r}
+p_Treatment_Gen$level = "Genera"
+colnames(p_Treatment_Gen)[1] = "Taxa"
+p_Treatment_Fam$level = "Family"
+colnames(p_Treatment_Fam)[1] = "Taxa"
+p_Treatment_Order$level = "Order"
+colnames(p_Treatment_Order)[1] = "Taxa"
+p_Treatment_Phy$level = "Phylum"
+colnames(p_Treatment_Phy)[1] = "Taxa"
+p_Treatment <- rbind(p_Treatment_Gen,p_Treatment_Fam,p_Treatment_Order,p_Treatment_Phy)
+p_Treatment$level <- factor(as.character(p_Treatment$level),levels = c("Genera","Family","Order","Phylum"))
+```
+
+```{r}
+df_annotate <- p_Treatment[((p_Treatment$p2<0.1) | (p_Treatment$p1<0.1)) & ((abs(p_Treatment$logFC2) > 1.5)|(abs(p_Treatment$logFC1) > 1.5)),]
+df_annotate <- df_annotate[!duplicated(df_annotate$Taxa),]
+p2 <- ggplot(p_Treatment) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5) + geom_abline(aes(intercept = 0, slope = 1)) + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1), y = -log(p2) + 0.1, label = Taxa),size = 2) + facet_wrap(~level,ncol = 2) + theme(legend.position="top") + ggtitle("Duodopa.") + xlim(0,1.2*max(-log(p_Treatment$p1))) + ylim(0,1.2*max(-log(p_Treatment$p2)))
+```
+
+```{r}
+ggexport(p2,filename = "./fig/figure8_Duodopa.pdf",width = 12, height = 16, units = "in")
+tiff(filename = "./fig/figure8_Duodopa.tiff" ,width=12, height=16, units="in", compression="lzw", res=150)
+p2
+dev.off()
+```
+
+```{r}
+write.csv(p_Treatment,"./fig/fig8_Duodopa.csv")
+```
+
+
+```{r}
+p_Treatment_L = read.csv("./fig/figure8_Duodopa.csv")
+p_Treatment_D = read.csv("./fig/figure8_DBS.csv")
+p_Treatment_L$Treatment = "LCIG"
+p_Treatment_D$Treatment = "DBS"
+p_Treatment = rbind(p_Treatment_L,p_Treatment_D)
+
+p_Treatment$level = factor(p_Treatment$level,levels = c("Genera","Family","Order","Phylum"))
+```
+
+```{r}
+p2 <- ggplot(p_Treatment) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5) + geom_abline(aes(intercept = 0, slope = 1),lyt = "dot") + theme_classic() + labs(x = "-log(p-value): t=0 vs. t=-2", y="-log(p-value): t=0 vs. t=6 or t=0 vs. t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = Taxa),colour = "gray50",alpha = 0.2)  + facet_grid(level~Treatment) + theme(legend.position="top")  + xlim(0,1.2*max(-log(p_Treatment$p1))) + ylim(0,1.2*max(-log(p_Treatment$p2)))
+```
+
+```{r}
+p2
+```
+
+# Phase graph
+
+```{r}
+psra_sub0 <- subset_samples(psra, (Treatment %in% c("Control","Longitudinal")))
+ps_fam <- tax_glom(psra_sub0, taxrank = "Family")
+ps_fam_melt <- psmelt(ps_fam)
+```
+
+## ANOVA
+
+```{r}
+eps = 1e-5
+fam_tab <- names(table(ps_fam_melt$Family))
+p_fam_aovp <- matrix(0, nrow = length(fam_tab), ncol = 2)
+for(i in 1:length(fam_tab)){
+  idx1 <- which(ps_fam_melt$Family == fam_tab[i])
+  ps_fam_sub <- ps_fam_melt[idx1,]
+  ps_fam_sub1 <- ps_fam_sub[,c("id","t","Treatment","Abundance")]
+#  ps_fam_spread <- ps_fam_sub1 %>% spread(t, Abundance)
+  ps_fam_sub1$t = factor(ps_fam_sub1$t, levels = c(0,6,12))
+  ps_fam_sub1$Treatment = factor(ps_fam_sub1$Treatment, levels = c("Control", "Longitudinal"))
+  fam_aov <- aovp(Abundance ~ t + Treatment, data = ps_fam_sub1)
+  fam_aov_sum <- summary(fam_aov)
+  temp <- fam_aov_sum[[1]]$`Pr(Prob)`[1:2]
+  temp[1 - temp < eps] = 1 - eps
+  temp[temp < eps] = eps
+  p_fam_aovp[i,] <- temp
+  
+}
+p_fam_aovp <- as.data.frame(p_fam_aovp)
+colnames(p_fam_aovp) <- c("p_time","p_Treatment")
+rownames(p_fam_aovp) <- fam_tab
+```
+
+```{r}
+log_aovp <- -log(p_fam_aovp)
+log_aovp$name <- rownames(log_aovp)
+log_aovp$color <- "0"
+log_aovp$color[(log_aovp$p_time > -log(0.05)) & (log_aovp$p_Treatment > -log(0.05))] <- "1"
+df_anno = log_aovp[((log_aovp$p_time > -log(0.05))&(log_aovp$p_Treatment > -log(0.05))),]
+
+
+fig_test1 <- ggplot(log_aovp) + geom_point(aes(x = p_time, y = p_Treatment, color = color)) + theme_bw() + geom_vline(xintercept = -log(0.05)) + geom_hline(yintercept = -log(0.05)) + scale_color_manual(values = c("gray30","red")) + theme(legend.position="none") + geom_text(data = df_anno, aes(x = p_time - 0.1,y = p_Treatment - 0.1),label = rownames(df_anno)) 
+```
+
+```{r}
+ggsave(fig_test1, filename = "fig_test1.pdf")
+```
+
+## pvalue-time
+
+```{r}
+eps = 1e-5
+fam_tab <- names(table(ps_fam_melt$Family))
+p_fam_time <- data.frame(p1 = 1, p2 = 1, type = "t = 6")
+for(i in 1:length(fam_tab)){
+  idx1 <- which(ps_fam_melt$Family == fam_tab[i])
+  ps_fam_sub <- ps_fam_melt[idx1,]
+  ps_fam_sub1 <- ps_fam_sub[,c("id","t","Treatment","Abundance")]
+  ps_fam_spread <- ps_fam_sub1 %>% spread(t, Abundance)
+  ps_fam_spread <- na.omit(ps_fam_spread)
+  colnames(ps_fam_spread)[c(3,4,5)] <- c("t0","t6","t12")
+  p1_fam <- wilcox.test(t0~Treatment, ps_fam_spread)$p.value
+  p6_fam <- wilcox.test(t6~Treatment, ps_fam_spread)$p.value
+  p12_fam <- wilcox.test(t12~Treatment, ps_fam_spread)$p.value
+  time_res <- c(p1_fam, p6_fam, p12_fam)
+  time_res[is.na(time_res)] = - 1 - eps
+  time_res[time_res > 1 - eps] = eps
+  time_res[time_res < eps] = eps
+  
+  temp <- data.frame(p1 = c(time_res[1], time_res[1]), p2 = c(time_res[2],time_res[3]), type = c("t=6","t=12"))
+  p_fam_time <- rbind(p_fam_time, temp)
+}
+p_fam_time <- p_fam_time[-1,]
+p_fam_time <- as.data.frame(p_fam_time)
+colnames(p_fam_time) <- c("p1","p2", "type")
+p_fam_time$name <- rep(fam_tab,each = 2)
+```
+
+```{r}
+
+df_annotate <- p_fam_time[(p_fam_time$p2<0.05)|(p_fam_time$p1<0.05),]
+df_annotate <- df_annotate[!duplicated(df_annotate$name),]
+
+fig_test2 <- ggplot(p_fam_time) + geom_point(aes(x = -log(p1), y = -log(p2), color = type), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = name),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate,aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = name)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05))
+fig_test2
+```
+
+```{r}
+ggsave(fig_test2, filename = "fig_test2.pdf")
+```
+
+
+## Vocalno plot
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psgen <- tax_glom(ps_sub1, "Genus")
+psgen <- subset_samples(psgen)
+psgen@sam_data$t = as.numeric(as.character(psgen@sam_data$t))
+
+psgen1 <- subset_samples(psgen, (t == 0))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen1@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen1@tax_table[,6]
+meta_data = psgen1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_0 <- aldex(gen_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_11 = rep("1",nrow(gen_aldex_0))
+color_11[(abs(gen_aldex_0$diff.btw)>1)&(gen_aldex_0$wi.ep<0.05)] = "2"
+df_anno = gen_aldex_0[(abs(gen_aldex_0$diff.btw)>1)&(gen_aldex_0$wi.ep<0.05),]
+p11 = ggplot(gen_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_11)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Genus t=0") + xlim(c(-2,2.3)) + ylim(c(0,10))
+p11
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psgen <- tax_glom(ps_sub1, "Genus")
+psgen <- subset_samples(psgen)
+psgen@sam_data$t = as.numeric(as.character(psgen@sam_data$t))
+
+psgen1 <- subset_samples(psgen, (t == 6))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen1@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen1@tax_table[,6]
+meta_data = psgen1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_6 <- aldex(gen_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_21 = rep("1",nrow(gen_aldex_6))
+color_21[(abs(gen_aldex_6$diff.btw)>1)&(gen_aldex_6$wi.ep<0.05)] = "2"
+df_anno = gen_aldex_6[(abs(gen_aldex_6$diff.btw)>1)&(gen_aldex_6$wi.ep<0.05),]
+p21 = ggplot(gen_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_21)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none")+ ggtitle("Genus t=6") + xlim(c(-2,2.3)) + ylim(c(0,10))
+p21
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psgen <- tax_glom(ps_sub1, "Genus")
+psgen <- subset_samples(psgen)
+psgen@sam_data$t = as.numeric(as.character(psgen@sam_data$t))
+
+psgen1 <- subset_samples(psgen, (t == 12))
+#print(psgen1@sam_data$t)
+gen_table = t(as.data.frame(psgen1@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psgen1@tax_table[,6]
+meta_data = psgen1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+gen_aldex_12 <- aldex(gen_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_31 = rep("1",nrow(gen_aldex_12))
+color_31[(abs(gen_aldex_12$diff.btw)>1)&(gen_aldex_12$wi.ep<0.05)] = "2"
+df_anno = gen_aldex_12[(abs(gen_aldex_12$diff.btw)>1)&(gen_aldex_12$wi.ep<0.05),]
+p31 = ggplot(gen_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_31)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Genus t=12") + xlim(c(-2,2.3)) + ylim(c(0,10))
+p31
+```
+
+Family
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psfam <- tax_glom(ps_sub1, "Family")
+psfam <- subset_samples(psfam)
+psfam@sam_data$t = as.numeric(as.character(psfam@sam_data$t))
+
+psfam1 <- subset_samples(psfam, (t == 0))
+#print(psfam1@sam_data$t)
+fam_table = t(as.data.frame(psfam1@otu_table))
+print(dim(fam_table))
+rownames(fam_table) = psfam1@tax_table[,5]
+meta_data = psfam1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#fam_clr <- aldex.clr(fam_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_0 <- aldex(fam_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_12 = rep("1",nrow(fam_aldex_0))
+color_12[(abs(fam_aldex_0$diff.btw)>1)&(fam_aldex_0$wi.ep<0.05)] = "2"
+df_anno = fam_aldex_0[(abs(fam_aldex_0$diff.btw)>1)&(fam_aldex_0$wi.ep<0.05),]
+p12 = ggplot(fam_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_12)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Family t=0") + xlim(c(-2,2.3)) + ylim(c(0,10))
+p12
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psfam <- tax_glom(ps_sub1, "Family")
+psfam <- subset_samples(psfam)
+psfam@sam_data$t = as.numeric(as.character(psfam@sam_data$t))
+
+psfam1 <- subset_samples(psfam, (t == 6))
+#print(psfam1@sam_data$t)
+fam_table = t(as.data.frame(psfam1@otu_table))
+print(dim(fam_table))
+rownames(fam_table) = psfam1@tax_table[,5]
+meta_data = psfam1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#fam_clr <- aldex.clr(fam_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_6 <- aldex(fam_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_22 = rep("1",nrow(fam_aldex_6))
+color_22[(abs(fam_aldex_6$diff.btw)>1)&(fam_aldex_6$wi.ep<0.05)] = "2"
+df_anno = fam_aldex_6[(abs(fam_aldex_6$diff.btw)>1)&(fam_aldex_6$wi.ep<0.05),]
+p22 = ggplot(fam_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_22)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Family t=6") + xlim(c(-2,2.3)) + ylim(c(0,10))
+p22
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psfam <- tax_glom(ps_sub1, "Family")
+psfam <- subset_samples(psfam)
+psfam@sam_data$t = as.numeric(as.character(psfam@sam_data$t))
+
+psfam1 <- subset_samples(psfam, (t == 12))
+#print(psfam1@sam_data$t)
+gen_table = t(as.data.frame(psfam1@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psfam1@tax_table[,5]
+meta_data = psfam1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+fam_aldex_12 <- aldex(gen_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_32 = rep("1",nrow(fam_aldex_12))
+color_32[(abs(fam_aldex_12$diff.btw)>1)&(fam_aldex_12$wi.ep<0.05)] = "2"
+df_anno = fam_aldex_12[(abs(fam_aldex_12$diff.btw)>1)&(fam_aldex_12$wi.ep<0.05),]
+p32 = ggplot(fam_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_32)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none")+ ggtitle("Family t=12")+ xlim(c(-2,2.3)) + ylim(c(0,10))
+p32
+```
+
+Order
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psord <- tax_glom(ps_sub1, "Order")
+psord <- subset_samples(psord)
+psord@sam_data$t = as.numeric(as.character(psord@sam_data$t))
+
+psord1 <- subset_samples(psord, (t == 0))
+#print(psord1@sam_data$t)
+ord_table = t(as.data.frame(psord1@otu_table))
+print(dim(ord_table))
+rownames(ord_table) = psord1@tax_table[,4]
+meta_data = psord1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#ord_clr <- aldex.clr(ord_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_0 <- aldex(ord_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_13 = rep("1",nrow(ord_aldex_0))
+color_13[(abs(ord_aldex_0$diff.btw)>1)&(ord_aldex_0$wi.ep<0.05)] = "2"
+df_anno = ord_aldex_0[(abs(ord_aldex_0$diff.btw)>1)&(ord_aldex_0$wi.ep<0.05),]
+p13 = ggplot(ord_aldex_0) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_13)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=0")+ xlim(c(-2,2.3)) + ylim(c(0,10))
+p13
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psord <- tax_glom(ps_sub1, "Order")
+psord <- subset_samples(psord)
+psord@sam_data$t = as.numeric(as.character(psord@sam_data$t))
+
+psord1 <- subset_samples(psord, (t == 6))
+#print(psord1@sam_data$t)
+ord_table = t(as.data.frame(psord1@otu_table))
+print(dim(ord_table))
+rownames(ord_table) = psord1@tax_table[,4]
+meta_data = psord1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#ord_clr <- aldex.clr(ord_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_6 <- aldex(ord_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_23 = rep("1",nrow(ord_aldex_6))
+color_23[(abs(ord_aldex_6$diff.btw)>1)&(ord_aldex_6$wi.ep<0.05)] = "2"
+df_anno = ord_aldex_6[(abs(ord_aldex_6$diff.btw)>1)&(ord_aldex_6$wi.ep<0.05),]
+p23 = ggplot(ord_aldex_6) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_23)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=6")+ xlim(c(-2,2.3)) + ylim(c(0,10))
+p23
+```
+
+
+```{r}
+ps_sub1 <- subset_samples(ps3, (Treatment %in% c("Control","Longitudinal")))
+psord <- tax_glom(ps_sub1, "Order")
+psord <- subset_samples(psord)
+psord@sam_data$t = as.numeric(as.character(psord@sam_data$t))
+
+psord1 <- subset_samples(psord, (t == 12))
+#print(psord1@sam_data$t)
+gen_table = t(as.data.frame(psord1@otu_table))
+print(dim(gen_table))
+rownames(gen_table) = psord1@tax_table[,4]
+meta_data = psord1@sam_data
+meta_data1 <- as.data.frame(as.matrix(meta_data))
+#meta_data1$t <- factor(as.numeric(as.character(meta_data1$t)))
+meta_data1$PD <- as.factor(as.character(meta_data1$PD))
+
+mm <- model.matrix(id ~  PD , meta_data1)
+#  print(mm)
+#gen_clr <- aldex.clr(gen_table, mm, mc.samples = 128, denom = "all")
+  
+ord_aldex_12 <- aldex(gen_table, meta_data$PD, mc.samples=1024, test="t", effect=TRUE,include.sample.summary=FALSE, denom="all", verbose=FALSE)
+```
+
+```{r}
+color_33 = rep("1",nrow(ord_aldex_12))
+color_33[(abs(ord_aldex_12$diff.btw)>1)&(ord_aldex_12$wi.ep<0.05)] = "2"
+df_anno = ord_aldex_12[(abs(ord_aldex_12$diff.btw)>1)&(ord_aldex_12$wi.ep<0.05),]
+p33 = ggplot(ord_aldex_12) + geom_point(aes(x = diff.btw, y = -log(wi.ep), color = color_33)) + labs(x = "fold change", y = "-log(p)") + theme_classic() + scale_color_manual(values = c("gray30","red")) + geom_text(data = df_anno,aes(x = diff.btw - 0.1,y=-log(wi.ep)-0.1),label = rownames(df_anno)) + theme(legend.position="none") + ggtitle("Order t=12")+ xlim(c(-2,2.3)) + ylim(c(0,10))
+p33
+```
+
+```{r}
+fig_volcano <- ggpubr::ggarrange(p11,p21,p31,p12,p22,p32,p13,p23,p33,ncol = 3,nrow = 3)
+fig_volcano
+ggsave(filename = "fig_volcano9.pdf",fig_volcano,width=16, height=16, units="in")
+```
+
+```{r}
+df11 <- gen_aldex_0
+df11$t = 0
+df11$taxa = "Genus"
+df21 <- gen_aldex_6
+df21$t = 6
+df21$taxa = "Genus"
+df31 <- gen_aldex_12
+df31$t = 12
+df31$taxa = "Genus"
+
+df12 <- fam_aldex_0
+df12$t = 0
+df12$taxa = "Family"
+df22 <- fam_aldex_6
+df22$t = 6
+df22$taxa = "Family"
+df32 <- fam_aldex_12
+df32$t = 12
+df32$taxa = "Family"
+
+df13 <- ord_aldex_0
+df13$t = 0
+df13$taxa = "Order"
+df23 <- ord_aldex_6
+df23$t = 6
+df23$taxa = "Order"
+df33 <- ord_aldex_12
+df33$t = 12
+df33$taxa = "Order"
+
+df <- rbind(df11, df21, df31, df12, df22, df32, df13, df23, df33)
+write.csv(df, file = "volcano9.csv")
+```
+
+```{r}
+gen_tab <- table(c(rownames(df11),rownames(df21),rownames(df31)))
+gen_name <- names(which(gen_tab == 3))
+fam_tab <- table(c(rownames(df12),rownames(df22),rownames(df32)))
+fam_name <- names(which(fam_tab == 3))
+ord_tab <- table(c(rownames(df13),rownames(df23),rownames(df33)))
+ord_name <- names(which(ord_tab == 3))
+
+
+df11_u <- df11[gen_name, ]
+df21_u <- df21[gen_name, ]
+df31_u <- df31[gen_name, ]
+df1 <- data.frame(taxa = gen_name, p1 = rep(df11_u$wi.ep, 2), p2 = c(df21_u$wi.ep, df31_u$wi.ep), t = c(rep("6",length(gen_name)),rep("12",length(gen_name))))
+
+df12_u <- df12[fam_name, ]
+df22_u <- df22[fam_name, ]
+df32_u <- df32[fam_name, ]
+df2 <- data.frame(taxa = fam_name, p1 = rep(df12_u$wi.ep, 2), p2 = c(df22_u$wi.ep, df32_u$wi.ep), t = c(rep("6",length(fam_name)),rep("12",length(fam_name))))
+
+df13_u <- df13[ord_name, ]
+df23_u <- df23[ord_name, ]
+df33_u <- df33[ord_name, ]
+df3 <- data.frame(taxa = ord_name, p1 = rep(df13_u$wi.ep, 2), p2 = c(df23_u$wi.ep, df33_u$wi.ep), t = c(rep("6",length(ord_name)),rep("12",length(ord_name))))
+```
+
+
+```{r}
+
+df_annotate1 <- df1[(df1$p2<0.05)|(df1$p1<0.05),]
+df_annotate1 <- df_annotate1[!duplicated(df_annotate1$taxa),]
+
+p1 <- ggplot(df1) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate1, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05)) + ggtitle("Genus") + xlim(c(0,8)) + ylim(c(0,10))
+p1
+```
+
+```{r}
+
+df_annotate2 <- df2[(df2$p2<0.05)|(df2$p1<0.05),]
+df_annotate2 <- df_annotate2[!duplicated(df_annotate2$taxa),]
+
+p2 <- ggplot(df2) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate2, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05)) + ggtitle("Family") + xlim(c(0,8)) + ylim(c(0,10))
+p2
+```
+
+```{r}
+
+df_annotate3 <- df3[(df3$p2<0.05)|(df3$p1<0.05),]
+df_annotate3 <- df_annotate3[!duplicated(df_annotate3$taxa),]
+
+p3 <- ggplot(df3) + geom_point(aes(x = -log(p1), y = -log(p2), color = t), size = 1.5,alpha = 0.5)  + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12") + scale_color_manual(values = brewer.pal(2, "Dark2"), name = "Contrast Timepoint")+ geom_path(aes(x = -log(p1), y = -log(p2), group = taxa),colour = "gray50",alpha = 0.2) + geom_text(data = df_annotate3, aes(x = -log(p1) + 0.1, y = -log(p2) + 0.1, label = taxa)) + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05)) + ggtitle("Order") + xlim(c(0,8)) + ylim(c(0,10))
+p3
+```
+
+```{r}
+fig_syn <- ggpubr::ggarrange(p1,p2,p3,ncol = 3,nrow = 1)
+fig_syn
+ggsave(filename = "fig_syn.pdf",fig_syn,width=16, height=5, units="in")
+```
+
+
+## Phase plot
+
+```{r}
+eps = 1e-5
+fam_tab <- names(table(ps_fam_melt$Family))
+p_fam_time <- data.frame(p1 = 1, p2 = 1, type = "t = 0")
+name_rec <- c()
+for(i in 1:length(fam_tab)){
+  idx1 <- which(ps_fam_melt$Family == fam_tab[i])
+  ps_fam_sub <- ps_fam_melt[idx1,]
+  ps_fam_sub1 <- ps_fam_sub[,c("id","t","Treatment","Abundance")]
+  ps_fam_spread <- ps_fam_sub1 %>% spread(t, Abundance)
+  ps_fam_spread <- na.omit(ps_fam_spread)
+  colnames(ps_fam_spread)[c(3,4,5)] <- c("t0","t6","t12")
+  ps_fam_spread$D1 <- log(ps_fam_spread[,4]) - log(ps_fam_spread[,3])
+  ps_fam_spread$D2 <- log(ps_fam_spread[,5]) - log(ps_fam_spread[,4])
+  p1_fam <- wilcox.test(t0~Treatment, ps_fam_spread)$p.value
+  p6_fam <- wilcox.test(t6~Treatment, ps_fam_spread)$p.value
+  p12_fam <- wilcox.test(t12~Treatment, ps_fam_spread)$p.value
+  pD1_fam <- wilcox.test(D1~Treatment, ps_fam_spread)$p.value
+  pD2_fam <- wilcox.test(D2~Treatment, ps_fam_spread)$p.value
+  
+  time_res <- c(p1_fam, p6_fam, p12_fam, pD1_fam, pD2_fam)
+  time_res[is.na(time_res)] = - 1 - eps
+  time_res[time_res > 1 - eps] = eps
+  time_res[time_res < eps] = eps
+  if(sum(time_res[1:3] < 0.05)){
+    name_rec <- c(name_rec, fam_tab[i])
+    temp <- data.frame(p1 = c(time_res[1], time_res[2], time_res[3]), p2 = c(time_res[4],time_res[5],1), type = c("t=0","t=6","t=12"))
+    p_fam_time <- rbind(p_fam_time, temp)
+  }
+  
+}
+p_fam_time <- p_fam_time[-1,]
+p_fam_time <- as.data.frame(p_fam_time)
+colnames(p_fam_time) <- c("p1","p2", "type")
+p_fam_time$name <- rep(name_rec,each = 3)
+p_fam_time$type <- factor(p_fam_time$type, levels = c("t=0","t=6","t=12"))
+```
+
+```{r}
+
+fig_test3 <- ggplot(p_fam_time) + geom_point(aes(x = -log(p1), y = -log(p2), shape = type), size = 1.5)  + geom_path(aes(x = -log(p1), y = -log(p2)), alpha = 0.2) + theme_classic() + labs(x = "-log(p-value): t=0", y="-log(p-value): t=6 or t=12")  + geom_hline(yintercept = -log(0.05)) + geom_vline(xintercept = -log(0.05))
+fig_test3
+```
+
+```{r}
+ggsave(fig_test3, filename = "fig_test3.pdf")
+```
+
